@@ -105,8 +105,25 @@
           <Fallback name="UndockOrSkip">
             <!-- Already undocked? Skip. -->
             <Inverter><IsCharging/></Inverter>
-            <!-- On dock — record GPS, back up, verify, calibrate heading -->
+            <!-- On dock — wait for GPS, save map, then undock -->
             <Sequence name="UndockSequence">
+              <!-- Wait for GPS fix before undocking. GPS position confirms
+                   SLAM map alignment with datum. On fresh map this ensures
+                   the dock area is mapped with correct coordinates. -->
+              <PublishHighLevelStatus state="2" state_name="WAITING_GPS"/>
+              <RetryUntilSuccessful num_attempts="300">
+                <Fallback>
+                  <IsGPSFixed/>
+                  <Sequence>
+                    <WaitForDuration duration_sec="1.0"/>
+                    <AlwaysFailure/>
+                  </Sequence>
+                </Fallback>
+              </RetryUntilSuccessful>
+              <!-- Save SLAM map while docked with correct heading.
+                   If undock flips heading, restart loads this good map. -->
+              <SaveSlamMap map_path="/ros2_ws/maps/garden_map"/>
+              <PublishHighLevelStatus state="2" state_name="UNDOCKING"/>
               <RecordUndockStart/>
               <RetryUntilSuccessful num_attempts="3" name="UndockRetry">
                 <Sequence name="UndockAndVerify">
