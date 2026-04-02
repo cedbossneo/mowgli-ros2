@@ -8,14 +8,12 @@
 #include "behaviortree_cpp/bt_factory.h"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "mowgli_behavior/bt_context.hpp"
+#include "mowgli_interfaces/action/plan_coverage.hpp"
 #include "mowgli_interfaces/srv/get_mowing_area.hpp"
 #include "mowgli_interfaces/srv/mower_control.hpp"
 #include "nav2_msgs/action/follow_path.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "nav_msgs/msg/path.hpp"
-#include "opennav_coverage_msgs/action/compute_coverage_path.hpp"
-#include "opennav_coverage_msgs/msg/coordinate.hpp"
-#include "opennav_coverage_msgs/msg/coordinates.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 
@@ -26,8 +24,8 @@ namespace mowgli_behavior
 // ComputeCoverage
 // ---------------------------------------------------------------------------
 
-/// Calls opennav_coverage's ComputeCoveragePath action server, then stores
-/// the resulting swaths and turns in BTContext::coverage_plan.
+/// Calls the coverage_planner_node's PlanCoverage action server, then stores
+/// the resulting swaths in BTContext::coverage_plan.
 ///
 /// Input ports:
 ///   area_index (uint32_t, default "0") - mowing area index.
@@ -36,18 +34,18 @@ namespace mowgli_behavior
 class ComputeCoverage : public BT::StatefulActionNode
 {
 public:
-  using CoverageAction = opennav_coverage_msgs::action::ComputeCoveragePath;
+  using CoverageAction = mowgli_interfaces::action::PlanCoverage;
   using GoalHandle = rclcpp_action::ClientGoalHandle<CoverageAction>;
 
-  ComputeCoverage(const std::string& name, const BT::NodeConfig& config)
-      : BT::StatefulActionNode(name, config)
-  {
-  }
+  ComputeCoverage(const std::string & name, const BT::NodeConfig & config)
+  : BT::StatefulActionNode(name, config) {}
 
   static BT::PortsList providedPorts()
   {
-    return {BT::InputPort<uint32_t>("area_index", 0u, "Mowing area index to plan"),
-            BT::OutputPort<std::string>("first_swath_start", "First swath start as 'x;y;yaw'")};
+    return {
+      BT::InputPort<uint32_t>("area_index", 0u, "Mowing area index to plan"),
+      BT::OutputPort<std::string>("first_swath_start", "First swath start as 'x;y;yaw'")
+    };
   }
 
   BT::NodeStatus onStart() override;
@@ -72,10 +70,6 @@ private:
 ///   1. NavigateToPose (SmacPlanner2D) to swath start - obstacle-aware transit
 ///   2. FollowPath (RPP) along the swath - straight-line mowing
 ///
-/// If transit fails (obstacle blocking), the swath is skipped.
-/// If all swaths are completed, returns SUCCESS.
-/// If all remaining swaths are blocked, returns FAILURE.
-///
 /// Blade control (SetMowerEnabled) is handled internally:
 ///   ON during swath following, OFF during transit.
 class ExecuteSwathBySwath : public BT::StatefulActionNode
@@ -86,10 +80,8 @@ public:
   using NavGoalHandle = rclcpp_action::ClientGoalHandle<Nav2Navigate>;
   using FollowGoalHandle = rclcpp_action::ClientGoalHandle<Nav2FollowPath>;
 
-  ExecuteSwathBySwath(const std::string& name, const BT::NodeConfig& config)
-      : BT::StatefulActionNode(name, config)
-  {
-  }
+  ExecuteSwathBySwath(const std::string & name, const BT::NodeConfig & config)
+  : BT::StatefulActionNode(name, config) {}
 
   static BT::PortsList providedPorts()
   {
@@ -101,29 +93,15 @@ public:
   void onHalted() override;
 
 private:
-  enum class Phase
-  {
-    TRANSIT_TO_SWATH,
-    MOWING_SWATH,
-    DONE
-  };
+  enum class Phase { TRANSIT_TO_SWATH, MOWING_SWATH, DONE };
 
-  /// Build a 2-pose nav_msgs/Path from swath start to end with correct heading.
-  nav_msgs::msg::Path swathToPath(const BTContext::Swath& swath,
-                                  const rclcpp::Node::SharedPtr& node) const;
-
-  /// Send NavigateToPose goal to reach swath start.
-  void sendTransitGoal(const BTContext::Swath& swath);
-
-  /// Send FollowPath goal to track the swath line.
-  void sendSwathGoal(const BTContext::Swath& swath);
-
-  /// Call mower_control service (fire-and-forget).
+  nav_msgs::msg::Path swathToPath(
+    const BTContext::Swath & swath, const rclcpp::Node::SharedPtr & node) const;
+  void sendTransitGoal(const BTContext::Swath & swath);
+  void sendSwathGoal(const BTContext::Swath & swath);
   void setBladeEnabled(bool enabled);
-
-  /// Advance to the next swath (skipping current if failed).
-  /// Returns true if there are more swaths to try, false if done.
   bool advanceToNextSwath();
+  bool checkStuck(const std::shared_ptr<BTContext> & ctx);
 
   // State
   Phase phase_{Phase::TRANSIT_TO_SWATH};
@@ -143,20 +121,17 @@ private:
   std::shared_future<FollowGoalHandle::SharedPtr> follow_future_;
   FollowGoalHandle::SharedPtr follow_handle_;
 
-  // Cooldown timer: after a transit failure, wait before sending the next
-  // goal to avoid flooding bt_navigator with rapid-fire requests.
   std::chrono::steady_clock::time_point transit_cooldown_until_{};
 
-  // Stuck detection: cancel action if robot doesn't move for stuck_timeout_sec.
+  /// True when the current transit uses FollowPath instead of NavigateToPose.
+  bool use_follow_for_transit_{false};
+
+  // Stuck detection
   static constexpr double stuck_timeout_sec_{10.0};
-  static constexpr double stuck_min_progress_{0.05};  // metres
+  static constexpr double stuck_min_progress_{0.05};
   std::chrono::steady_clock::time_point last_progress_time_{};
   double last_progress_x_{0.0};
   double last_progress_y_{0.0};
-
-  /// Check if robot is stuck by comparing current pose to last known progress.
-  /// Returns true if stuck (should cancel and skip).
-  bool checkStuck(const std::shared_ptr<BTContext>& ctx);
 };
 
 }  // namespace mowgli_behavior
