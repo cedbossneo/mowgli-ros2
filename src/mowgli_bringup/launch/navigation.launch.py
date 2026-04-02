@@ -185,24 +185,45 @@ def generate_launch_description() -> LaunchDescription:
         # When creating a fresh map, initialize SLAM at the dock position
         # (relative to GPS datum). This aligns the new SLAM map frame with
         # GPS coordinates so mowing areas are at the correct location.
+        #
+        # Priority:
+        #   1. /tmp/dock_start_pose.txt — written by hardware_bridge with
+        #      magnetometer-resolved heading (best, runtime value)
+        #   2. mowgli_robot.yaml dock_pose_x/y/yaw — config fallback
         dock_start_pose = None
         if not map_exists:
-            robot_config = "/ros2_ws/config/mowgli_robot.yaml"
-            if os.path.isfile(robot_config):
-                with open(robot_config, "r") as f:
-                    rcfg = yaml.safe_load(f) or {}
-                rp = rcfg.get("mowgli", {}).get("ros__parameters", {})
-                dx = float(rp.get("dock_pose_x", 0.0))
-                dy = float(rp.get("dock_pose_y", 0.0))
-                dyaw = float(rp.get("dock_pose_yaw", 0.0))
-                # Always use dock pose — (0,0,0) is valid (dock at datum origin)
-                dock_start_pose = [dx, dy, dyaw]
-                actions.append(
-                    LogInfo(msg=(
-                        f"[navigation.launch.py] Fresh map: initializing SLAM "
-                        f"at dock pose [{dx:.2f}, {dy:.2f}, {dyaw:.2f}]"
-                    ))
-                )
+            dock_file = "/tmp/dock_start_pose.txt"
+            if os.path.isfile(dock_file):
+                try:
+                    with open(dock_file, "r") as f:
+                        parts = f.read().strip().split()
+                    dx, dy, dyaw = float(parts[0]), float(parts[1]), float(parts[2])
+                    dock_start_pose = [dx, dy, dyaw]
+                    actions.append(
+                        LogInfo(msg=(
+                            f"[navigation.launch.py] Fresh map: SLAM start pose "
+                            f"from dock_pose_fix [{dx:.2f}, {dy:.2f}, {dyaw:.3f}]"
+                        ))
+                    )
+                except (ValueError, IndexError):
+                    pass
+
+            if dock_start_pose is None:
+                robot_config = "/ros2_ws/config/mowgli_robot.yaml"
+                if os.path.isfile(robot_config):
+                    with open(robot_config, "r") as f:
+                        rcfg = yaml.safe_load(f) or {}
+                    rp = rcfg.get("mowgli", {}).get("ros__parameters", {})
+                    dx = float(rp.get("dock_pose_x", 0.0))
+                    dy = float(rp.get("dock_pose_y", 0.0))
+                    dyaw = float(rp.get("dock_pose_yaw", 0.0))
+                    dock_start_pose = [dx, dy, dyaw]
+                    actions.append(
+                        LogInfo(msg=(
+                            f"[navigation.launch.py] Fresh map: SLAM start pose "
+                            f"from config [{dx:.2f}, {dy:.2f}, {dyaw:.3f}]"
+                        ))
+                    )
 
         # If we have a dock start pose, create new params with it
         if dock_start_pose is not None:

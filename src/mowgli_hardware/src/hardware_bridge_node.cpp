@@ -32,6 +32,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -458,6 +459,27 @@ private:
     if (is_charging_ && dock_yaw_ == 0.0 && mag_initialized_)
     {
       dock_yaw_ = mag_heading_avg_;
+      RCLCPP_INFO(get_logger(),
+        "Dock yaw from magnetometer: %.3f rad (%.1f deg)",
+        dock_yaw_, dock_yaw_ * 180.0 / M_PI);
+    }
+
+    // Write resolved dock pose to file for SLAM initialization.
+    // On fresh map start, navigation.launch.py reads this file to set
+    // SLAM's map_start_pose so the map frame aligns with GPS/datum.
+    if (is_charging_ && !dock_pose_written_)
+    {
+      const double dx = dock_x_;
+      const double dy = dock_y_;
+      // dock_yaw_ is already resolved (from config or magnetometer)
+      std::ofstream f("/tmp/dock_start_pose.txt");
+      if (f.is_open()) {
+        f << dx << " " << dy << " " << dock_yaw_ << std::endl;
+        dock_pose_written_ = true;
+        RCLCPP_INFO(get_logger(),
+          "Wrote dock start pose to /tmp/dock_start_pose.txt: [%.2f, %.2f, %.3f]",
+          dx, dy, dock_yaw_);
+      }
     }
 
     // Orientation not computed here; fill with identity and mark as unknown.
@@ -774,6 +796,7 @@ private:
 
   // Magnetometer heading (for dock orientation auto-detection)
   bool mag_initialized_{false};
+  bool dock_pose_written_{false};
   double mag_heading_avg_{0.0};
   double mag_sin_avg_{0.0};
   double mag_cos_avg_{0.0};
