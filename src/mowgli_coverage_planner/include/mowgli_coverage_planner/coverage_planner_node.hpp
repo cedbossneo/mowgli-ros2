@@ -24,9 +24,13 @@
 #include <string>
 #include <vector>
 
+#include <mutex>
+
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "mowgli_coverage_planner/polygon_utils.hpp"
 #include "mowgli_interfaces/action/plan_coverage.hpp"
+#include "mowgli_interfaces/msg/obstacle_array.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -142,6 +146,26 @@ private:
   rclcpp_action::Server<PlanCoverageAction>::SharedPtr action_server_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr outline_pub_;
+  rclcpp::Subscription<mowgli_interfaces::msg::ObstacleArray>::SharedPtr obstacle_sub_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_sub_;
+
+  /// Latest tracked obstacles from obstacle_tracker (guarded by mutex).
+  std::mutex obstacle_mutex_;
+  std::vector<geometry_msgs::msg::Polygon> tracked_obstacles_;
+
+  /// Latest global costmap (guarded by mutex).
+  mutable std::mutex costmap_mutex_;
+  nav_msgs::msg::OccupancyGrid::SharedPtr latest_costmap_;
+
+  /// Extract obstacle polygons from lethal cells in the costmap.
+  /// Groups connected lethal cells into clusters and returns their
+  /// convex hulls as polygons suitable for F2C cell holes.
+  std::vector<geometry_msgs::msg::Polygon> extract_costmap_obstacles() const;
+
+  /// Minimum number of connected lethal cells to form an obstacle.
+  int costmap_min_cluster_size_{3};
+  /// Inflation radius around costmap obstacles (metres).
+  double costmap_obstacle_inflation_{0.10};
 
   // -------------------------------------------------------------------------
   // Parameters
@@ -152,7 +176,8 @@ private:
   double headland_width_;  ///< Width of one headland pass [m].
   double default_mow_angle_;  ///< Default mowing angle [deg]; -1 = auto.
   double path_spacing_;  ///< Distance between parallel swath centrelines [m].
-  double min_turning_radius_;  ///< Minimum robot turning radius for Dubins curves [m].
+  double min_turning_radius_;  ///< Minimum robot turning radius [m].
+  bool decompose_cells_;  ///< Enable cell decomposition for irregular polygons.
   std::string map_frame_;  ///< TF frame for output paths.
 };
 

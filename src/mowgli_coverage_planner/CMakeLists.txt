@@ -26,6 +26,7 @@ find_package(mowgli_interfaces REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(Fields2Cover REQUIRED)
+find_package(GDAL REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Library: mowgli_coverage_planner_lib
@@ -56,7 +57,12 @@ ament_target_dependencies(mowgli_coverage_planner_lib
 )
 
 target_link_libraries(mowgli_coverage_planner_lib
-  Fields2Cover::Fields2Cover
+  Fields2Cover
+  ${GDAL_LIBRARIES}
+)
+
+target_include_directories(mowgli_coverage_planner_lib PUBLIC
+  ${GDAL_INCLUDE_DIRS}
 )
 
 # ---------------------------------------------------------------------------

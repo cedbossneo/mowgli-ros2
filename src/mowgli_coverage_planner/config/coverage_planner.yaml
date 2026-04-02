@@ -8,7 +8,12 @@ coverage_planner_node:
     headland_width: 0.25
     default_mow_angle: -1.0
     path_spacing: 0.18
-    # Turning radius is not used for path geometry (straight-line swaths
-    # with point-turns), but F2C still requires it for the robot model.
-    min_turning_radius: 0.01
+    # Turning radius for F2C Dubins path planning.
+    # 0.30m produces clean arc turns that work well for both adjacent
+    # swaths (small U-turns) and obstacle transitions (smooth arcs).
+    # Diff-drive robots execute these as rotate + arc + rotate.
+    min_turning_radius: 0.15
+    # Cell decomposition: splits non-convex polygons into convex sub-cells.
+    # Significantly improves coverage of irregular/L-shaped gardens.
+    decompose_cells: true
     map_frame: "map"

@@ -50,7 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-ublox-msgs \
     ros-jazzy-nmea-msgs \
     ros-jazzy-rtcm-msgs \
-    # tinyxml2 (required at runtime by BehaviorTree.CPP and opennav_coverage)
+    # tinyxml2 (required at runtime by BehaviorTree.CPP)
     libtinyxml2-dev \
     # Rotation shim controller for transit navigation
     ros-jazzy-nav2-rotation-shim-controller \
@@ -60,7 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Nav2 msgs (CostmapFilterInfo for costmap filters)
     ros-jazzy-nav2-msgs \
     # Coverage planning (F2C v1.2.1 built from source in deps stage)
-    # ros-jazzy-fields2cover -- removed: opennav_coverage requires F2C v1.2.1
+    # ros-jazzy-fields2cover -- removed: we build F2C v2.0.0 from source
     libgdal-dev \
     # Simulation bridge (needed at runtime for ros_gz_bridge topic bridging)
     ros-jazzy-ros-gz-sim \
@@ -91,8 +91,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /ros2_ws
 
-# ---- Fields2Cover v1.2.1-devel from source (required by opennav_coverage) ----
-RUN git clone --branch v1.2.1-devel --depth 1 \
+# ---- Fields2Cover v2.0.0 from source -----------------------------------------
+# v2 adds cell decomposition for irregular gardens, OR-tools route optimization,
+# and better obstacle handling. opennav_coverage is no longer used — the project
+# calls F2C directly from coverage_planner_node.
+RUN git clone --branch main --depth 1 \
       https://github.com/Fields2Cover/Fields2Cover.git /tmp/f2c && \
     cd /tmp/f2c && mkdir build && cd build && \
     cmake .. \
@@ -102,11 +105,6 @@ RUN git clone --branch v1.2.1-devel --depth 1 \
       -DBUILD_PYTHON=OFF && \
     make -j"$(nproc)" && make install && ldconfig && \
     rm -rf /tmp/f2c
-
-# ---- opennav_coverage from source (jazzy branch) ----------------------------
-RUN git clone --branch jazzy --depth 1 \
-      https://github.com/open-navigation/opennav_coverage.git \
-      /ros2_ws/src/opennav_coverage
 
 # Copy only package.xml + CMakeLists.txt to resolve rosdep deps (cache layer).
 # This ensures the expensive rosdep install is only re-run when package
@@ -199,7 +197,7 @@ FROM base AS runtime
 WORKDIR /ros2_ws
 
 # Pull Fields2Cover and steering_functions shared libraries from build stage
-# (needed at runtime by opennav_coverage's coverage_server)
+# (needed at runtime by coverage_planner_node)
 COPY --from=build /usr/local/lib/libFields2Cover* /usr/local/lib/
 COPY --from=build /usr/local/lib/libsteering_functions* /usr/local/lib/
 COPY --from=build /usr/local/include/fields2cover* /usr/local/include/
