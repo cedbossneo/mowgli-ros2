@@ -30,11 +30,13 @@
  */
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "mowgli_hardware/ll_datatypes.hpp"
 #include "mowgli_hardware/packet_handler.hpp"
@@ -83,6 +85,10 @@ private:
     heartbeat_rate_ = declare_parameter<double>("heartbeat_rate", 4.0);
     publish_rate_ = declare_parameter<double>("publish_rate", 100.0);
     high_level_rate_ = declare_parameter<double>("high_level_rate", 2.0);
+    dock_x_ = declare_parameter<double>("dock_pose_x", 0.0);
+    dock_y_ = declare_parameter<double>("dock_pose_y", 0.0);
+    dock_yaw_ = declare_parameter<double>("dock_pose_yaw", 0.0);
+    imu_yaw_offset_ = declare_parameter<double>("imu_yaw", 0.0);
 
     RCLCPP_INFO(get_logger(),
                 "Parameters: serial_port=%s baud_rate=%d heartbeat_rate=%.1f Hz "
@@ -101,6 +107,7 @@ private:
     pub_power_ = create_publisher<mowgli_interfaces::msg::Power>("~/power", 10);
     pub_imu_ = create_publisher<sensor_msgs::msg::Imu>("~/imu/data_raw", 10);
     pub_wheel_odom_ = create_publisher<nav_msgs::msg::Odometry>("~/wheel_odom", 10);
+    pub_dock_pose_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("/dock_pose_fix", 10);
   }
 
   void create_subscribers()
@@ -332,6 +339,31 @@ private:
       pub_status_->publish(msg);
     }
 
+    // ---- Dock pose fix (when charging, anchor position + orientation) ----
+    // When on the dock, we know the exact position. This prevents
+    // position drift from GPS noise and gives the EKF a heading reference.
+    // dock at (0,0) is valid — it means the datum IS the dock.
+    if (is_charging_)
+    {
+      auto pose_msg = geometry_msgs::msg::PoseWithCovarianceStamped{};
+      pose_msg.header.stamp = stamp;
+      pose_msg.header.frame_id = "map";
+      pose_msg.pose.pose.position.x = dock_x_;
+      pose_msg.pose.pose.position.y = dock_y_;
+      pose_msg.pose.pose.orientation.z = std::sin(dock_yaw_ / 2.0);
+      pose_msg.pose.pose.orientation.w = std::cos(dock_yaw_ / 2.0);
+      // Extremely tight covariance — must dominate GPS completely
+      pose_msg.pose.covariance[0] = 1e-8;    // x
+      pose_msg.pose.covariance[7] = 1e-8;    // y
+      pose_msg.pose.covariance[14] = 1e6;    // z
+      pose_msg.pose.covariance[21] = 1e6;    // roll
+      pose_msg.pose.covariance[28] = 1e6;    // pitch
+      // Yaw: tight if we have a heading (from config or magnetometer),
+      // loose if completely unknown
+      pose_msg.pose.covariance[35] = (dock_yaw_ != 0.0 || mag_initialized_) ? 1e-4 : 1e6;
+      pub_dock_pose_->publish(pose_msg);
+    }
+
     // ---- Emergency message ----
     {
       auto msg = mowgli_interfaces::msg::Emergency{};
@@ -389,29 +421,55 @@ private:
     msg.linear_acceleration.y = static_cast<double>(pkt.acceleration_mss[1]);
     msg.linear_acceleration.z = static_cast<double>(pkt.acceleration_mss[2]);
 
-    // Gyro bias compensation: when wheels are stationary the gyro should
-    // read zero.  Any residual is bias.  Track it with an exponential
-    // moving average and subtract from all readings.
-    const double raw_gx = static_cast<double>(pkt.gyro_rads[0]);
-    const double raw_gy = static_cast<double>(pkt.gyro_rads[1]);
-    const double raw_gz = static_cast<double>(pkt.gyro_rads[2]);
+    // Publish raw gyro values without bias compensation.
+    // The EKF handles gyro drift via differential mode (imu0_differential: true).
+    // v2 (OpenMower/rosserial) published raw gyro and it worked correctly.
+    msg.angular_velocity.x = static_cast<double>(pkt.gyro_rads[0]);
+    msg.angular_velocity.y = static_cast<double>(pkt.gyro_rads[1]);
+    msg.angular_velocity.z = static_cast<double>(pkt.gyro_rads[2]);
 
-    if (wheels_stationary_)
+    // Compute heading from magnetometer (atan2 of x,y components).
+    // The mag data is in the IMU frame (x=forward, y=left for REP-103).
+    // atan2(mag_y, mag_x) gives the heading relative to magnetic north.
+    const double mag_x = static_cast<double>(pkt.mag_uT[0]);
+    const double mag_y = static_cast<double>(pkt.mag_uT[1]);
+    // Apply imu_yaw offset to correct for IMU mounting rotation
+    const double mag_heading = std::atan2(-mag_y, mag_x) - imu_yaw_offset_;
+
+    // Track magnetometer heading with EMA when stationary (for dock yaw)
+    if (wheels_stationary_ && (mag_x != 0.0 || mag_y != 0.0))
     {
-      // Update bias estimate (low-pass filter, alpha ~0.01 = slow adaptation)
-      constexpr double kAlpha = 0.05;
-      gyro_bias_x_ += kAlpha * (raw_gx - gyro_bias_x_);
-      gyro_bias_y_ += kAlpha * (raw_gy - gyro_bias_y_);
-      gyro_bias_z_ += kAlpha * (raw_gz - gyro_bias_z_);
+      if (!mag_initialized_)
+      {
+        mag_heading_avg_ = mag_heading;
+        mag_initialized_ = true;
+      }
+      else
+      {
+        // Circular averaging via unit vector EMA
+        constexpr double kMagAlpha = 0.02;
+        mag_sin_avg_ += kMagAlpha * (std::sin(mag_heading) - mag_sin_avg_);
+        mag_cos_avg_ += kMagAlpha * (std::cos(mag_heading) - mag_cos_avg_);
+        mag_heading_avg_ = std::atan2(mag_sin_avg_, mag_cos_avg_);
+      }
     }
 
-    msg.angular_velocity.x = raw_gx - gyro_bias_x_;
-    msg.angular_velocity.y = raw_gy - gyro_bias_y_;
-    msg.angular_velocity.z = raw_gz - gyro_bias_z_;
+    // When charging and dock_yaw is not set, use magnetometer heading
+    if (is_charging_ && dock_yaw_ == 0.0 && mag_initialized_)
+    {
+      dock_yaw_ = mag_heading_avg_;
+    }
 
     // Orientation not computed here; fill with identity and mark as unknown.
     msg.orientation.w = 1.0;
     msg.orientation_covariance[0] = -1.0;  // Signal: orientation unknown.
+
+    // Gyro covariance: WT901 gyro z-axis severely under-reports yaw rate
+    // (~17% of actual). Set high covariance so the EKF trusts wheel odom
+    // angular velocity over the gyro for yaw rate.
+    msg.angular_velocity_covariance[0] = 0.1;   // roll rate
+    msg.angular_velocity_covariance[4] = 0.1;   // pitch rate
+    msg.angular_velocity_covariance[8] = 1.0;   // yaw rate — low confidence
 
     pub_imu_->publish(msg);
   }
@@ -447,9 +505,23 @@ private:
     const auto stamp = now();
     const double dt_sec = static_cast<double>(pkt.dt_millis) / 1000.0;
 
-    // Compute tick deltas since last packet
-    const int32_t d_left = pkt.left_ticks - prev_left_ticks_;
-    const int32_t d_right = pkt.right_ticks - prev_right_ticks_;
+    // Debug: log raw tick values periodically
+    static int odom_debug_count = 0;
+    if (++odom_debug_count % 50 == 0) {
+      RCLCPP_INFO(get_logger(),
+        "Odom raw: L=%d R=%d dt=%u spd_L=%d spd_R=%d dir_L=%u dir_R=%u",
+        pkt.left_ticks, pkt.right_ticks, pkt.dt_millis,
+        pkt.left_speed, pkt.right_speed, pkt.left_direction, pkt.right_direction);
+    }
+
+    // Compute tick deltas since last packet.
+    // Tick counters are cumulative absolute (always increasing).
+    // The direction fields indicate forward (1) or reverse (2).
+    // Apply sign based on direction so differential kinematics work.
+    int32_t d_left = pkt.left_ticks - prev_left_ticks_;
+    int32_t d_right = pkt.right_ticks - prev_right_ticks_;
+    if (pkt.left_direction == 2) d_left = -d_left;   // reverse
+    if (pkt.right_direction == 2) d_right = -d_right; // reverse
     prev_left_ticks_ = pkt.left_ticks;
     prev_right_ticks_ = pkt.right_ticks;
 
@@ -642,6 +714,7 @@ private:
   rclcpp::Publisher<mowgli_interfaces::msg::Power>::SharedPtr pub_power_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr pub_imu_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_wheel_odom_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pub_dock_pose_;
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_;
   rclcpp::Subscription<mowgli_interfaces::msg::HighLevelStatus>::SharedPtr sub_hl_status_;
@@ -673,6 +746,10 @@ private:
   bool emergency_active_{false};
   bool emergency_release_pending_{false};
   int startup_release_count_{5};  // Send release for first 5 heartbeats
+  double dock_x_{0.0};
+  double dock_y_{0.0};
+  double dock_yaw_{0.0};
+  double imu_yaw_offset_{0.0};
   bool mow_enabled_{false};
   bool is_charging_{false};
   uint8_t current_mode_{0};
@@ -694,6 +771,12 @@ private:
   double gyro_bias_x_{0.0};
   double gyro_bias_y_{0.0};
   double gyro_bias_z_{0.0};
+
+  // Magnetometer heading (for dock orientation auto-detection)
+  bool mag_initialized_{false};
+  double mag_heading_avg_{0.0};
+  double mag_sin_avg_{0.0};
+  double mag_cos_avg_{0.0};
 };
 
 }  // namespace mowgli_hardware

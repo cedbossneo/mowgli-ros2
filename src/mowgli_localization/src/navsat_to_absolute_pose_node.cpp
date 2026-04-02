@@ -75,7 +75,7 @@ void NavSatToAbsolutePoseNode::create_publishers()
 void NavSatToAbsolutePoseNode::create_subscribers()
 {
   fix_sub_ = create_subscription<sensor_msgs::msg::NavSatFix>(
-      "/ublox_gps_node/fix",
+      "/gps/fix",
       rclcpp::QoS(10),
       [this](sensor_msgs::msg::NavSatFix::ConstSharedPtr msg)
       {

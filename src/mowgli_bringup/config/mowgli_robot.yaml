@@ -46,6 +46,17 @@ mowgli:
     lidar_z: 0.22              # vertical offset (m)
     lidar_yaw: 0.0             # heading offset (rad)
 
+    # IMU mounting (relative to base_link)
+    imu_x: 0.0                 # forward offset (m)
+    imu_y: 0.0                 # lateral offset (m)
+    imu_z: 0.095               # vertical offset (m) — base_height / 2
+    imu_yaw: 0.0               # heading offset (rad) — if IMU is rotated
+
+    # GPS antenna mounting (relative to base_link)
+    gps_x: 0.0                 # forward offset (m)
+    gps_y: 0.0                 # lateral offset (m)
+    gps_z: 0.20                # vertical offset (m) — top of chassis + antenna
+
     # -----------------------------------------------------------------
     # GPS / Positioning
     # -----------------------------------------------------------------

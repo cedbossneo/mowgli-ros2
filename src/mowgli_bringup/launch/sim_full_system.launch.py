@@ -37,7 +37,7 @@ def generate_launch_description() -> LaunchDescription:
     simulation_dir = get_package_share_directory("mowgli_simulation")
     behavior_dir = get_package_share_directory("mowgli_behavior")
     map_dir = get_package_share_directory("mowgli_map")
-    # coverage_dir removed: opennav_coverage reads from nav2_params.yaml
+    coverage_dir = get_package_share_directory("mowgli_coverage_planner")
     monitoring_dir = get_package_share_directory("mowgli_monitoring")
 
     # ------------------------------------------------------------------
@@ -97,6 +97,7 @@ def generate_launch_description() -> LaunchDescription:
     map_params = os.path.join(map_dir, "config", "map_server.yaml")
     nav2_params_file = os.path.join(bringup_dir, "config", "nav2_params.yaml")
     monitoring_params = os.path.join(monitoring_dir, "config", "diagnostics.yaml")
+    coverage_params = os.path.join(coverage_dir, "config", "coverage_planner.yaml")
 
     # ------------------------------------------------------------------
     # 1. Gazebo simulation — world + spawned robot
@@ -178,33 +179,16 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ------------------------------------------------------------------
-    # 5. Coverage server (opennav_coverage)
+    # 5. Coverage planner (Fields2Cover v2)
     # ------------------------------------------------------------------
-    coverage_server_node = Node(
-        package="opennav_coverage",
-        executable="opennav_coverage",
-        name="coverage_server",
+    coverage_planner_node = Node(
+        package="mowgli_coverage_planner",
+        executable="coverage_planner_node",
+        name="coverage_planner_node",
         output="screen",
         parameters=[
-            nav2_params_file,
+            coverage_params,
             {"use_sim_time": True},
-        ],
-    )
-
-    # Lifecycle manager to activate the coverage server (it's a Nav2
-    # LifecycleNode not managed by Nav2's own lifecycle_manager_navigation).
-    coverage_lifecycle_manager = Node(
-        package="nav2_lifecycle_manager",
-        executable="lifecycle_manager",
-        name="lifecycle_manager_coverage",
-        output="screen",
-        parameters=[
-            {
-                "use_sim_time": True,
-                "autostart": True,
-                "node_names": ["coverage_server"],
-                "bond_timeout": 10.0,
-            },
         ],
     )
 
@@ -324,8 +308,7 @@ def generate_launch_description() -> LaunchDescription:
             # Individual nodes
             behavior_tree_node,
             map_server_node,
-            coverage_server_node,
-            coverage_lifecycle_manager,
+            coverage_planner_node,
             obstacle_tracker_node,
             diagnostics_node,
             foxglove_bridge_node,

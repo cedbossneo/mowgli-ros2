@@ -78,6 +78,17 @@ def generate_launch_description() -> LaunchDescription:
     lidar_z   = str(robot_params.get("lidar_z", "0.22"))
     lidar_yaw = str(robot_params.get("lidar_yaw", "0.0"))
 
+    # IMU position / orientation from robot config (with defaults)
+    imu_x   = str(robot_params.get("imu_x", "0.0"))
+    imu_y   = str(robot_params.get("imu_y", "0.0"))
+    imu_z   = str(robot_params.get("imu_z", "0.095"))
+    imu_yaw = str(robot_params.get("imu_yaw", "0.0"))
+
+    # GPS antenna position from robot config (with defaults)
+    gps_x   = str(robot_params.get("gps_x", "0.0"))
+    gps_y   = str(robot_params.get("gps_y", "0.0"))
+    gps_z   = str(robot_params.get("gps_z", "0.20"))
+
     robot_description_content = Command(
         [
             FindExecutable(name="xacro"),
@@ -87,6 +98,13 @@ def generate_launch_description() -> LaunchDescription:
             " lidar_y:=", lidar_y,
             " lidar_z:=", lidar_z,
             " lidar_yaw:=", lidar_yaw,
+            " imu_x:=", imu_x,
+            " imu_y:=", imu_y,
+            " imu_z:=", imu_z,
+            " imu_yaw:=", imu_yaw,
+            " gps_x:=", gps_x,
+            " gps_y:=", gps_y,
+            " gps_z:=", gps_z,
         ]
     )
 
@@ -123,15 +141,20 @@ def generate_launch_description() -> LaunchDescription:
             # Allow command-line override of the serial port.
             {"serial_port": serial_port},
             {"use_sim_time": use_sim_time},
+            # Pass dock pose from robot config for dock position anchoring
+            {"dock_pose_x": float(robot_params.get("dock_pose_x", 0.0))},
+            {"dock_pose_y": float(robot_params.get("dock_pose_y", 0.0))},
+            {"dock_pose_yaw": float(robot_params.get("dock_pose_yaw", 0.0))},
+            {"imu_yaw": float(robot_params.get("imu_yaw", 0.0))},
         ],
-        # The node publishes on ~/topic (e.g. /hardware_bridge/wheel_odom)
-        # but the EKF and other nodes expect unprefixed names.
+        # The node publishes on ~/topic (e.g. /hardware_bridge/wheel_odom).
+        # behavior_tree_node subscribes to /hardware_bridge/status etc.
         remappings=[
             ("~/imu/data_raw", "/imu/data"),
             ("~/wheel_odom", "/wheel_odom"),
-            ("~/emergency", "/emergency"),
-            ("~/power", "/power"),
-            ("~/status", "/status"),
+            ("~/emergency", "/hardware_bridge/emergency"),
+            ("~/power", "/hardware_bridge/power"),
+            ("~/status", "/hardware_bridge/status"),
             ("~/cmd_vel", "/cmd_vel"),
         ],
     )

@@ -40,7 +40,8 @@
         </inertia>
       </inertial>
 
-      <!-- Chassis visual — green -->
+      <!-- Chassis visual — green
+           visibility_flags 0x0001: invisible to LiDAR (mask 0xFFFF0000) -->
       <visual name="chassis_visual">
         <pose>0 0 0.095 0 0 0</pose>
         <geometry>
@@ -51,6 +52,7 @@
           <diffuse>0.20 0.60 0.20 1</diffuse>
           <specular>0.1 0.3 0.1 1</specular>
         </material>
+        <visibility_flags>0x0001</visibility_flags>
       </visual>
 
       <!-- Chassis collision -->
@@ -170,6 +172,7 @@
           <ambient>0.2 0.2 0.2 1</ambient>
           <diffuse>0.2 0.2 0.2 1</diffuse>
         </material>
+        <visibility_flags>0x0001</visibility_flags>
       </visual>
       <collision name="collision">
         <geometry>
@@ -235,6 +238,7 @@
           <ambient>0.2 0.2 0.2 1</ambient>
           <diffuse>0.2 0.2 0.2 1</diffuse>
         </material>
+        <visibility_flags>0x0001</visibility_flags>
       </visual>
       <collision name="collision">
         <geometry>
@@ -302,6 +306,7 @@
           <ambient>0.5 0.5 0.5 1</ambient>
           <diffuse>0.6 0.6 0.6 1</diffuse>
         </material>
+        <visibility_flags>0x0001</visibility_flags>
       </visual>
       <collision name="collision">
         <geometry>
@@ -356,6 +361,7 @@
           <ambient>0.5 0.5 0.5 1</ambient>
           <diffuse>0.6 0.6 0.6 1</diffuse>
         </material>
+        <visibility_flags>0x0001</visibility_flags>
       </visual>
       <collision name="collision">
         <geometry>
@@ -412,6 +418,7 @@
           <diffuse>0.80 0.80 0.80 1</diffuse>
           <specular>0.5 0.5 0.5 1</specular>
         </material>
+        <visibility_flags>0x0001</visibility_flags>
       </visual>
       <!-- No collision — blade is virtual in simulation -->
     </link>
@@ -443,6 +450,7 @@
           <ambient>0.15 0.15 0.15 1</ambient>
           <diffuse>0.15 0.15 0.15 1</diffuse>
         </material>
+        <visibility_flags>0x0001</visibility_flags>
       </visual>
       <collision name="collision">
         <geometry>
@@ -451,10 +459,15 @@
       </collision>
 
       <!-- 2-D LiDAR sensor — 360 deg, 720 samples, 10 Hz -->
+      <!-- visibility_mask 0xFFFF0000: the LiDAR ignores geometry tagged with
+           visibility_flags in the lower 16 bits (0x0001 = robot self). This
+           prevents self-reflections from the chassis/wheels without needing
+           to increase range_min. -->
       <sensor name="lidar_sensor" type="gpu_lidar">
         <always_on>true</always_on>
         <update_rate>10</update_rate>
         <visualize>false</visualize>
+        <visibility_mask>0xFFFF0000</visibility_mask>
         <topic>/scan</topic>
         <lidar>
           <scan>
@@ -472,8 +485,8 @@
             </vertical>
           </scan>
           <range>
-            <!-- min 0.35m: avoids self-reflections from the robot chassis -->
-            <min>0.35</min>
+            <!-- Reduced from 0.35m: visibility_mask now filters self-reflections -->
+            <min>0.10</min>
             <max>12.0</max>
             <resolution>0.01</resolution>
           </range>
