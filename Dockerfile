@@ -196,11 +196,12 @@ FROM base AS runtime
 
 WORKDIR /ros2_ws
 
-# Pull Fields2Cover and steering_functions shared libraries from build stage
+# Pull Fields2Cover and its dependencies from build stage
 # (needed at runtime by coverage_planner_node)
-COPY --from=build /usr/local/lib/libFields2Cover* /usr/local/lib/
-COPY --from=build /usr/local/lib/libsteering_functions* /usr/local/lib/
-COPY --from=build /usr/local/include/fields2cover* /usr/local/include/
+# Copy all /usr/local/lib shared libraries installed by Fields2Cover build
+# (includes F2C, OR-Tools, matplotlibcpp, steering_functions, abseil, etc.)
+COPY --from=build /usr/local/lib/ /usr/local/lib/
+RUN ldconfig
 
 # Ensure libtinyxml2 .so.9 and .so.10 both resolve. The build stage may
 # compile against a different minor version than the runtime base provides
