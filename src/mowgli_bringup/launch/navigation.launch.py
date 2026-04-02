@@ -14,6 +14,7 @@ Brings up:
 
 import os
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
@@ -181,6 +182,45 @@ def generate_launch_description() -> LaunchDescription:
                 ))
             )
 
+        # When creating a fresh map, initialize SLAM at the dock position
+        # (relative to GPS datum). This aligns the new SLAM map frame with
+        # GPS coordinates so mowing areas are at the correct location.
+        dock_start_pose = None
+        if not map_exists:
+            robot_config = "/ros2_ws/config/mowgli_robot.yaml"
+            if os.path.isfile(robot_config):
+                with open(robot_config, "r") as f:
+                    rcfg = yaml.safe_load(f) or {}
+                rp = rcfg.get("mowgli", {}).get("ros__parameters", {})
+                dx = float(rp.get("dock_pose_x", 0.0))
+                dy = float(rp.get("dock_pose_y", 0.0))
+                dyaw = float(rp.get("dock_pose_yaw", 0.0))
+                if dx != 0.0 or dy != 0.0 or dyaw != 0.0:
+                    dock_start_pose = [dx, dy, dyaw]
+                    actions.append(
+                        LogInfo(msg=(
+                            f"[navigation.launch.py] Fresh map: initializing SLAM "
+                            f"at dock pose [{dx:.2f}, {dy:.2f}, {dyaw:.2f}]"
+                        ))
+                    )
+
+        # If we have a dock start pose, create new params with it
+        if dock_start_pose is not None:
+            pose_str = str(dock_start_pose)
+            mapping_slam_params_dock = RewrittenYaml(
+                source_file=slam_toolbox_params_file,
+                root_key="",
+                param_rewrites={
+                    "mode": "mapping",
+                    "map_file_name": map_file_name,
+                    "map_start_pose": pose_str,
+                    "use_sim_time": use_sim_time,
+                },
+                convert_types=True,
+            )
+        else:
+            mapping_slam_params_dock = mapping_slam_params
+
         # Select the correct launch file and params
         if effective_mode == "localization":
             launch_file = os.path.join(
@@ -191,7 +231,7 @@ def generate_launch_description() -> LaunchDescription:
             launch_file = os.path.join(
                 slam_toolbox_dir, "launch", "online_async_launch.py"
             )
-            params = mapping_slam_params
+            params = mapping_slam_params_dock
         else:  # lifelong
             launch_file = os.path.join(
                 slam_toolbox_dir, "launch", "online_async_launch.py"
