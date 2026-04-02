@@ -185,56 +185,49 @@ def generate_launch_description() -> LaunchDescription:
         # When creating a fresh map, initialize SLAM at the dock position
         # (relative to GPS datum). This aligns the new SLAM map frame with
         # GPS coordinates so mowing areas are at the correct location.
-        #
-        # Priority:
-        #   1. /tmp/dock_start_pose.txt — written by hardware_bridge with
-        #      magnetometer-resolved heading (best, runtime value)
-        #   2. mowgli_robot.yaml dock_pose_x/y/yaw — config fallback
         dock_start_pose = None
         if not map_exists:
-            dock_file = "/tmp/dock_start_pose.txt"
-            if os.path.isfile(dock_file):
-                try:
-                    with open(dock_file, "r") as f:
-                        parts = f.read().strip().split()
-                    dx, dy, dyaw = float(parts[0]), float(parts[1]), float(parts[2])
-                    dock_start_pose = [dx, dy, dyaw]
-                    actions.append(
-                        LogInfo(msg=(
-                            f"[navigation.launch.py] Fresh map: SLAM start pose "
-                            f"from dock_pose_fix [{dx:.2f}, {dy:.2f}, {dyaw:.3f}]"
-                        ))
-                    )
-                except (ValueError, IndexError):
-                    pass
+            robot_config = "/ros2_ws/config/mowgli_robot.yaml"
+            if os.path.isfile(robot_config):
+                with open(robot_config, "r") as f:
+                    rcfg = yaml.safe_load(f) or {}
+                rp = rcfg.get("mowgli", {}).get("ros__parameters", {})
+                dx = float(rp.get("dock_pose_x", 0.0))
+                dy = float(rp.get("dock_pose_y", 0.0))
+                dyaw = float(rp.get("dock_pose_yaw", 0.0))
+                dock_start_pose = [dx, dy, dyaw]
+                actions.append(
+                    LogInfo(msg=(
+                        f"[navigation.launch.py] Fresh map: SLAM start pose "
+                        f"at dock [{dx:.2f}, {dy:.2f}, {dyaw:.3f}]"
+                    ))
+                )
 
-            if dock_start_pose is None:
-                robot_config = "/ros2_ws/config/mowgli_robot.yaml"
-                if os.path.isfile(robot_config):
-                    with open(robot_config, "r") as f:
-                        rcfg = yaml.safe_load(f) or {}
-                    rp = rcfg.get("mowgli", {}).get("ros__parameters", {})
-                    dx = float(rp.get("dock_pose_x", 0.0))
-                    dy = float(rp.get("dock_pose_y", 0.0))
-                    dyaw = float(rp.get("dock_pose_yaw", 0.0))
-                    dock_start_pose = [dx, dy, dyaw]
-                    actions.append(
-                        LogInfo(msg=(
-                            f"[navigation.launch.py] Fresh map: SLAM start pose "
-                            f"from config [{dx:.2f}, {dy:.2f}, {dyaw:.3f}]"
-                        ))
-                    )
-
-        # If we have a dock start pose, create new params with it
+        # If we have a dock start pose, create a modified copy of the SLAM
+        # config with the dock pose baked in. RewrittenYaml can't handle
+        # list-type params, so we modify the YAML directly.
         if dock_start_pose is not None:
-            pose_str = str(dock_start_pose)
+            import tempfile
+            with open(slam_toolbox_params_file, "r") as f:
+                slam_yaml_content = f.read()
+            # Replace the default map_start_pose with dock pose
+            slam_yaml_content = slam_yaml_content.replace(
+                "map_start_pose: [0.0, 0.0, 0.0]",
+                f"map_start_pose: [{dock_start_pose[0]}, "
+                f"{dock_start_pose[1]}, {dock_start_pose[2]}]"
+            )
+            dock_slam_file = tempfile.NamedTemporaryFile(
+                mode='w', suffix='.yaml', prefix='slam_dock_',
+                delete=False
+            )
+            dock_slam_file.write(slam_yaml_content)
+            dock_slam_file.close()
             mapping_slam_params_dock = RewrittenYaml(
-                source_file=slam_toolbox_params_file,
+                source_file=dock_slam_file.name,
                 root_key="",
                 param_rewrites={
                     "mode": "mapping",
                     "map_file_name": map_file_name,
-                    "map_start_pose": pose_str,
                     "use_sim_time": use_sim_time,
                 },
                 convert_types=True,
