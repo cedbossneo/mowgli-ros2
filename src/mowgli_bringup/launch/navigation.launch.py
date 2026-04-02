@@ -195,14 +195,14 @@ def generate_launch_description() -> LaunchDescription:
                 dx = float(rp.get("dock_pose_x", 0.0))
                 dy = float(rp.get("dock_pose_y", 0.0))
                 dyaw = float(rp.get("dock_pose_yaw", 0.0))
-                if dx != 0.0 or dy != 0.0 or dyaw != 0.0:
-                    dock_start_pose = [dx, dy, dyaw]
-                    actions.append(
-                        LogInfo(msg=(
-                            f"[navigation.launch.py] Fresh map: initializing SLAM "
-                            f"at dock pose [{dx:.2f}, {dy:.2f}, {dyaw:.2f}]"
-                        ))
-                    )
+                # Always use dock pose — (0,0,0) is valid (dock at datum origin)
+                dock_start_pose = [dx, dy, dyaw]
+                actions.append(
+                    LogInfo(msg=(
+                        f"[navigation.launch.py] Fresh map: initializing SLAM "
+                        f"at dock pose [{dx:.2f}, {dy:.2f}, {dyaw:.2f}]"
+                    ))
+                )
 
         # If we have a dock start pose, create new params with it
         if dock_start_pose is not None:
