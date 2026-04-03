@@ -8,7 +8,9 @@
 #include "geometry_msgs/msg/point32.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
+#include "rcl_interfaces/srv/set_parameters.hpp"
 #include "robot_localization/srv/set_pose.hpp"
+#include "slam_toolbox/srv/reset.hpp"
 #include "std_srvs/srv/empty.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2/utils.hpp"
@@ -288,6 +290,50 @@ BT::NodeStatus CalibrateHeadingFromUndock::tick()
   (void)future;
 
   ctx->undock_start_recorded = false;
+
+  // Also reset SLAM so it restarts with correct heading.
+  // Set map_start_pose parameter to GPS position + heading, then reset.
+  auto param_client = ctx->node->create_client<rcl_interfaces::srv::SetParameters>(
+    "/slam_toolbox/set_parameters");
+  if (param_client->wait_for_service(std::chrono::seconds(2)))
+  {
+    auto param_req = std::make_shared<rcl_interfaces::srv::SetParameters::Request>();
+    rcl_interfaces::msg::Parameter p;
+    p.name = "map_start_pose";
+    p.value.type = rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE_ARRAY;
+    p.value.double_array_value = {ctx->gps_x, ctx->gps_y, heading};
+    param_req->parameters.push_back(p);
+    auto param_future = param_client->async_send_request(param_req);
+    // Wait briefly for parameter to be set before resetting
+    param_future.wait_for(std::chrono::seconds(1));
+
+    RCLCPP_INFO(ctx->node->get_logger(),
+                "CalibrateHeadingFromUndock: set SLAM map_start_pose to [%.3f, %.3f, %.3f]",
+                ctx->gps_x, ctx->gps_y, heading);
+
+    // Now reset SLAM — it will restart from the new map_start_pose
+    auto reset_client = ctx->node->create_client<slam_toolbox::srv::Reset>(
+      "/slam_toolbox/reset");
+    if (reset_client->wait_for_service(std::chrono::seconds(2)))
+    {
+      auto reset_req = std::make_shared<slam_toolbox::srv::Reset::Request>();
+      reset_req->pause_new_measurements = false;
+      auto reset_future = reset_client->async_send_request(reset_req);
+      (void)reset_future;
+      RCLCPP_INFO(ctx->node->get_logger(),
+                  "CalibrateHeadingFromUndock: SLAM reset with correct heading");
+    }
+    else
+    {
+      RCLCPP_WARN(ctx->node->get_logger(),
+                  "CalibrateHeadingFromUndock: /slam_toolbox/reset not available");
+    }
+  }
+  else
+  {
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "CalibrateHeadingFromUndock: /slam_toolbox/set_parameters not available");
+  }
 
   return BT::NodeStatus::SUCCESS;
 }

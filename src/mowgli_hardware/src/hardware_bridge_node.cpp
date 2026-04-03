@@ -359,9 +359,9 @@ private:
       pose_msg.pose.covariance[14] = 1e6;    // z
       pose_msg.pose.covariance[21] = 1e6;    // roll
       pose_msg.pose.covariance[28] = 1e6;    // pitch
-      // Yaw: tight if we have a heading (from config or magnetometer),
-      // loose if completely unknown
-      pose_msg.pose.covariance[35] = (dock_yaw_ != 0.0 || mag_initialized_) ? 1e-4 : 1e6;
+      // Yaw: tight only if user configured a specific dock_pose_yaw,
+      // loose otherwise (heading from SLAM + GPS after undock)
+      pose_msg.pose.covariance[35] = (dock_yaw_ != 0.0) ? 1e-4 : 1e6;
       pub_dock_pose_->publish(pose_msg);
     }
 
@@ -455,14 +455,10 @@ private:
       }
     }
 
-    // When charging and dock_yaw is not set, use magnetometer heading
-    if (is_charging_ && dock_yaw_ == 0.0 && mag_initialized_)
-    {
-      dock_yaw_ = mag_heading_avg_;
-      RCLCPP_INFO(get_logger(),
-        "Dock yaw from magnetometer: %.3f rad (%.1f deg)",
-        dock_yaw_, dock_yaw_ * 180.0 / M_PI);
-    }
+    // Magnetometer heading is tracked but NOT used for dock_yaw.
+    // Magnetometer accuracy is unreliable and conflicts with SLAM heading.
+    // Heading is determined by SLAM + GPS displacement after undock.
+    // dock_yaw_ stays at the user-configured value (or 0.0 = unknown).
 
     // Write resolved dock pose to file for SLAM initialization.
     // On fresh map start, navigation.launch.py reads this file to set
@@ -471,7 +467,7 @@ private:
     {
       const double dx = dock_x_;
       const double dy = dock_y_;
-      // dock_yaw_ is already resolved (from config or magnetometer)
+      // dock_yaw_ is from user config only (magnetometer no longer used)
       std::ofstream f("/tmp/dock_start_pose.txt");
       if (f.is_open()) {
         f << dx << " " << dy << " " << dock_yaw_ << std::endl;

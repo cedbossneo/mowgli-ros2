@@ -95,7 +95,7 @@ CoveragePlannerNode::CoveragePlannerNode(const rclcpp::NodeOptions & options)
     "~/coverage_outline",
     rclcpp::QoS(1).transient_local());
 
-  costmap_min_cluster_size_ = declare_parameter<int>("costmap_min_cluster_size", 3);
+  costmap_min_cluster_size_ = declare_parameter<int>("costmap_min_cluster_size", 10);
   costmap_obstacle_inflation_ = declare_parameter<double>("costmap_obstacle_inflation", 0.10);
 
   // Subscribe to global costmap for obstacle extraction.
