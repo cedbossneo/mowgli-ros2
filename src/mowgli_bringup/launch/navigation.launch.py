@@ -139,6 +139,7 @@ def generate_launch_description() -> LaunchDescription:
         param_rewrites={
             "mode": "mapping",
             "map_file_name": map_file_name,
+            "map_start_at_dock": "false",
             "use_sim_time": use_sim_time,
         },
         convert_types=True,
