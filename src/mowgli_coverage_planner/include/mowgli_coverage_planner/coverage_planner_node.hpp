@@ -166,6 +166,9 @@ private:
   int costmap_min_cluster_size_{3};
   /// Inflation radius around costmap obstacles (metres).
   double costmap_obstacle_inflation_{0.10};
+  /// Whether to extract obstacles from the global costmap (SLAM map walls).
+  /// Default false — collision_monitor handles real-time avoidance instead.
+  bool use_costmap_obstacles_{false};
 
   // -------------------------------------------------------------------------
   // Parameters

@@ -97,6 +97,7 @@ CoveragePlannerNode::CoveragePlannerNode(const rclcpp::NodeOptions & options)
 
   costmap_min_cluster_size_ = declare_parameter<int>("costmap_min_cluster_size", 10);
   costmap_obstacle_inflation_ = declare_parameter<double>("costmap_obstacle_inflation", 0.10);
+  use_costmap_obstacles_ = declare_parameter<bool>("use_costmap_obstacles", false);
 
   // Subscribe to global costmap for obstacle extraction.
   costmap_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
@@ -271,9 +272,15 @@ void CoveragePlannerNode::execute(
   }
 
   // 3) Obstacles extracted from global costmap (lethal cells).
-  auto costmap_obstacles = extract_costmap_obstacles();
-  for (const auto & obs : costmap_obstacles) {
-    add_obstacle_ring(obs);
+  //    Disabled by default — the collision_monitor handles real-time obstacle
+  //    avoidance during navigation. Costmap obstacles from SLAM map walls
+  //    fill the mowing area and collapse the coverage plan.
+  std::vector<std::vector<std::pair<double, double>>> costmap_obstacles;
+  if (use_costmap_obstacles_) {
+    costmap_obstacles = extract_costmap_obstacles();
+    for (const auto & obs : costmap_obstacles) {
+      add_obstacle_ring(obs);
+    }
   }
 
   RCLCPP_INFO(get_logger(),
