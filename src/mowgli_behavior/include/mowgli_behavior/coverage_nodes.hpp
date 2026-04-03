@@ -85,7 +85,10 @@ public:
 
   static BT::PortsList providedPorts()
   {
-    return {};
+    return {
+      BT::InputPort<double>("stuck_timeout_sec", 10.0, "Seconds without progress before stuck"),
+      BT::InputPort<double>("stuck_min_progress", 0.05, "Minimum distance (m) to count as progress")
+    };
   }
 
   BT::NodeStatus onStart() override;
@@ -126,9 +129,9 @@ private:
   /// True when the current transit uses FollowPath instead of NavigateToPose.
   bool use_follow_for_transit_{false};
 
-  // Stuck detection
-  static constexpr double stuck_timeout_sec_{10.0};
-  static constexpr double stuck_min_progress_{0.05};
+  // Stuck detection (configurable via input ports)
+  double stuck_timeout_sec_{10.0};
+  double stuck_min_progress_{0.05};
   std::chrono::steady_clock::time_point last_progress_time_{};
   double last_progress_x_{0.0};
   double last_progress_y_{0.0};

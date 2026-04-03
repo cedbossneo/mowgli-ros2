@@ -45,6 +45,7 @@ public:
     context_->node = shared_from_this();
     context_->tf_buffer = std::make_shared<tf2_ros::Buffer>(get_clock());
     context_->tf_listener = std::make_shared<tf2_ros::TransformListener>(*context_->tf_buffer);
+    context_->helper_node = rclcpp::Node::make_shared("_bt_helper_node");
 
     setupSubscribers();
     setupServiceServer();
@@ -220,6 +221,10 @@ private:
     blackboard_->set("dock_pose", dock_pose);
     blackboard_->set("undock_pose", undock_pose);
 
+    // Rain delay: parameter in minutes, blackboard in seconds
+    const double rain_delay_minutes = declare_parameter<double>("rain_delay_minutes", 30.0);
+    blackboard_->set("rain_delay_sec", rain_delay_minutes * 60.0);
+
     declare_parameter<double>("tick_rate", 10.0);
 
     // Battery voltage curve — configurable via mowgli_robot.yaml
@@ -230,8 +235,13 @@ private:
 
     tree_ = factory_.createTreeFromFile(tree_file, blackboard_);
 
-    // Attach a console logger so state transitions are visible in the terminal.
-    logger_ = std::make_unique<BT::StdCoutLogger>(tree_);
+    // Optionally attach a console logger for debugging BT state transitions.
+    const bool bt_debug_logging = declare_parameter<bool>("bt_debug_logging", false);
+    if (bt_debug_logging)
+    {
+      logger_ = std::make_unique<BT::StdCoutLogger>(tree_);
+      RCLCPP_INFO(get_logger(), "BT StdCoutLogger enabled (bt_debug_logging=true)");
+    }
 
     RCLCPP_INFO(get_logger(), "Behavior tree loaded successfully");
   }

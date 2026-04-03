@@ -138,11 +138,24 @@ struct BTContext
   /// Progress tracking across charge cycles.
   size_t next_swath_index{0};
 
+  /// Coverage progress (updated by ExecuteSwathBySwath, read by PublishHighLevelStatus).
+  int current_area{-1};
+  int total_swaths{0};
+  int completed_swaths{0};
+  int skipped_swaths{0};
+
   // -----------------------------------------------------------------------
   // TF buffer (shared across all BT nodes)
   // -----------------------------------------------------------------------
   std::shared_ptr<tf2_ros::Buffer> tf_buffer;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener;
+
+  // -----------------------------------------------------------------------
+  // Shared helper node for service calls (avoids creating/destroying DDS
+  // participants on every call — the main node is in rclcpp::spin so it
+  // cannot be used directly with spin_until_future_complete).
+  // -----------------------------------------------------------------------
+  rclcpp::Node::SharedPtr helper_node;
 };
 
 }  // namespace mowgli_behavior

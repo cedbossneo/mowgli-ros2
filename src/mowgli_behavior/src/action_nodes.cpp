@@ -589,10 +589,10 @@ BT::NodeStatus PlanCoveragePath::onStart()
     auto request = std::make_shared<mowgli_interfaces::srv::GetMowingArea::Request>();
     request->index = area_index;
 
-    // Use a temporary node to avoid "already added to an executor" error
+    // Use the shared helper node to avoid "already added to an executor" error
     // (the main behavior_tree_node is already spinning in rclcpp::spin).
-    auto tmp_node = rclcpp::Node::make_shared("_plan_coverage_srv_helper");
-    auto tmp_client = tmp_node->create_client<mowgli_interfaces::srv::GetMowingArea>(
+    auto helper = ctx->helper_node;
+    auto tmp_client = helper->create_client<mowgli_interfaces::srv::GetMowingArea>(
         "/map_server_node/get_mowing_area");
     if (!tmp_client->wait_for_service(std::chrono::milliseconds(2000)))
     {
@@ -602,7 +602,7 @@ BT::NodeStatus PlanCoveragePath::onStart()
       return BT::NodeStatus::FAILURE;
     }
     auto future = tmp_client->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(tmp_node, future, std::chrono::seconds(5)) !=
+    if (rclcpp::spin_until_future_complete(helper, future, std::chrono::seconds(5)) !=
         rclcpp::FutureReturnCode::SUCCESS)
     {
       RCLCPP_ERROR(ctx->node->get_logger(), "PlanCoveragePath: get_mowing_area timed out");
@@ -1010,9 +1010,9 @@ BT::NodeStatus ReplanCoverage::onStart()
     auto request = std::make_shared<mowgli_interfaces::srv::GetMowingArea::Request>();
     request->index = 0;
 
-    // Use a temporary node to avoid "already added to an executor" error.
-    auto tmp_node = rclcpp::Node::make_shared("_replan_coverage_srv_helper");
-    auto tmp_client = tmp_node->create_client<mowgli_interfaces::srv::GetMowingArea>(
+    // Use the shared helper node to avoid "already added to an executor" error.
+    auto helper = ctx->helper_node;
+    auto tmp_client = helper->create_client<mowgli_interfaces::srv::GetMowingArea>(
         "/map_server_node/get_mowing_area");
     if (!tmp_client->wait_for_service(std::chrono::milliseconds(2000)))
     {
@@ -1021,7 +1021,7 @@ BT::NodeStatus ReplanCoverage::onStart()
       return BT::NodeStatus::FAILURE;
     }
     auto future = tmp_client->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(tmp_node, future, std::chrono::seconds(5)) !=
+    if (rclcpp::spin_until_future_complete(helper, future, std::chrono::seconds(5)) !=
         rclcpp::FutureReturnCode::SUCCESS)
     {
       RCLCPP_ERROR(ctx->node->get_logger(), "ReplanCoverage: get_mowing_area timed out");

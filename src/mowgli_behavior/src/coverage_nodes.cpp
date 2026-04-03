@@ -9,6 +9,10 @@
 #include "mowgli_behavior/coverage_nodes.hpp"
 
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <sstream>
 
 #include "action_msgs/msg/goal_status.hpp"
@@ -19,6 +23,65 @@
 
 namespace mowgli_behavior
 {
+
+// ===========================================================================
+// Coverage checkpoint persistence helpers
+// ===========================================================================
+
+static const std::string kCheckpointPath = "/ros2_ws/maps/coverage_checkpoint.txt";
+
+/// Compute a simple hash of the coverage plan for identity comparison.
+/// Uses number of swaths + first/last swath positions.
+static uint64_t computePlanHash(const BTContext::CoveragePlan & plan)
+{
+  std::size_t h = std::hash<size_t>{}(plan.swaths.size());
+  if (!plan.swaths.empty()) {
+    const auto & first = plan.swaths.front();
+    const auto & last = plan.swaths.back();
+    auto combine = [&h](float v) {
+      h ^= std::hash<float>{}(v) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    };
+    combine(first.start.x);
+    combine(first.start.y);
+    combine(first.end.x);
+    combine(first.end.y);
+    combine(last.start.x);
+    combine(last.start.y);
+    combine(last.end.x);
+    combine(last.end.y);
+  }
+  return static_cast<uint64_t>(h);
+}
+
+/// Save checkpoint: plan_hash and next_swath_index.
+static void saveCheckpoint(uint64_t plan_hash, size_t next_swath_index)
+{
+  try {
+    std::filesystem::create_directories(
+      std::filesystem::path(kCheckpointPath).parent_path());
+    std::ofstream ofs(kCheckpointPath);
+    if (ofs.is_open()) {
+      ofs << plan_hash << " " << next_swath_index << "\n";
+    }
+  } catch (...) {
+    // Non-fatal -- checkpoint is best-effort.
+  }
+}
+
+/// Load checkpoint.  Returns true if file exists and was parsed successfully.
+static bool loadCheckpoint(uint64_t & plan_hash, size_t & next_swath_index)
+{
+  try {
+    std::ifstream ifs(kCheckpointPath);
+    if (!ifs.is_open()) {
+      return false;
+    }
+    ifs >> plan_hash >> next_swath_index;
+    return !ifs.fail();
+  } catch (...) {
+    return false;
+  }
+}
 
 // ===========================================================================
 // ComputeCoverage — calls coverage_planner_node's PlanCoverage action
@@ -51,8 +114,8 @@ BT::NodeStatus ComputeCoverage::onStart()
   CoverageAction::Goal goal_msg;
 
   {
-    auto tmp_node = rclcpp::Node::make_shared("_compute_coverage_srv_helper");
-    auto tmp_client = tmp_node->create_client<mowgli_interfaces::srv::GetMowingArea>(
+    auto helper = ctx->helper_node;
+    auto tmp_client = helper->create_client<mowgli_interfaces::srv::GetMowingArea>(
       "/map_server_node/get_mowing_area");
 
     if (!tmp_client->wait_for_service(std::chrono::milliseconds(2000))) {
@@ -65,7 +128,7 @@ BT::NodeStatus ComputeCoverage::onStart()
     request->index = area_index;
 
     auto future = tmp_client->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(tmp_node, future, std::chrono::seconds(5)) !=
+    if (rclcpp::spin_until_future_complete(helper, future, std::chrono::seconds(5)) !=
       rclcpp::FutureReturnCode::SUCCESS)
     {
       RCLCPP_ERROR(ctx->node->get_logger(), "ComputeCoverage: get_mowing_area timed out");
@@ -182,6 +245,25 @@ BT::NodeStatus ComputeCoverage::onRunning()
   // Store in context.
   ctx->coverage_plan = std::move(plan);
   ctx->next_swath_index = 0;
+
+  // Check for a saved checkpoint — resume from where we left off if the
+  // plan hash matches (same area, same swath layout).
+  {
+    const uint64_t current_hash = computePlanHash(*ctx->coverage_plan);
+    uint64_t saved_hash = 0;
+    size_t saved_index = 0;
+    if (loadCheckpoint(saved_hash, saved_index) && saved_hash == current_hash &&
+        saved_index < ctx->coverage_plan->swaths.size())
+    {
+      ctx->next_swath_index = saved_index;
+      RCLCPP_INFO(ctx->node->get_logger(),
+        "ComputeCoverage: resuming from checkpoint — swath %zu/%zu",
+        saved_index + 1, ctx->coverage_plan->swaths.size());
+    } else {
+      // New plan — save initial checkpoint.
+      saveCheckpoint(current_hash, 0);
+    }
+  }
 
   // Output first swath start pose.
   const auto & first = ctx->coverage_plan->swaths.front();
@@ -318,6 +400,20 @@ bool ExecuteSwathBySwath::advanceToNextSwath()
   swath_index_++;
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
   ctx->next_swath_index = swath_index_;
+
+  // Sync coverage progress to context for PublishHighLevelStatus
+  {
+    std::lock_guard<std::mutex> lock(ctx->context_mutex);
+    ctx->total_swaths = static_cast<int>(total_swaths_);
+    ctx->completed_swaths = static_cast<int>(completed_swaths_);
+    ctx->skipped_swaths = static_cast<int>(skipped_swaths_);
+  }
+
+  // Persist progress so we can resume after a restart.
+  if (ctx->coverage_plan) {
+    saveCheckpoint(computePlanHash(*ctx->coverage_plan), swath_index_);
+  }
+
   return swath_index_ < total_swaths_;
 }
 
@@ -361,6 +457,18 @@ BT::NodeStatus ExecuteSwathBySwath::onStart()
   swath_index_ = ctx->next_swath_index;
   completed_swaths_ = 0;
   skipped_swaths_ = 0;
+
+  // Read configurable stuck detection thresholds from input ports
+  getInput<double>("stuck_timeout_sec", stuck_timeout_sec_);
+  getInput<double>("stuck_min_progress", stuck_min_progress_);
+
+  // Publish initial progress to context
+  {
+    std::lock_guard<std::mutex> lock(ctx->context_mutex);
+    ctx->total_swaths = static_cast<int>(total_swaths_);
+    ctx->completed_swaths = static_cast<int>(completed_swaths_);
+    ctx->skipped_swaths = static_cast<int>(skipped_swaths_);
+  }
 
   if (swath_index_ >= total_swaths_) {
     RCLCPP_INFO(ctx->node->get_logger(),

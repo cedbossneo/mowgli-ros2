@@ -166,4 +166,50 @@ BT::NodeStatus IsNewRain::tick()
                                                       : BT::NodeStatus::FAILURE;
 }
 
+// ---------------------------------------------------------------------------
+// IsChargingProgressing
+// ---------------------------------------------------------------------------
+
+BT::NodeStatus IsChargingProgressing::tick()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  std::lock_guard<std::mutex> lock(ctx->context_mutex);
+
+  const auto now = std::chrono::steady_clock::now();
+  const float current_battery = ctx->battery_percent;
+
+  if (!baseline_set_) {
+    baseline_battery_ = current_battery;
+    baseline_time_ = now;
+    baseline_set_ = true;
+    return BT::NodeStatus::SUCCESS;
+  }
+
+  const double elapsed =
+      std::chrono::duration<double>(now - baseline_time_).count();
+
+  if (elapsed < check_interval_sec_) {
+    // Not enough time has passed yet — assume charging is OK.
+    return BT::NodeStatus::SUCCESS;
+  }
+
+  // 30 minutes have passed — check progress.
+  const float increase = current_battery - baseline_battery_;
+
+  if (increase >= min_increase_) {
+    // Good progress — reset baseline for the next window.
+    baseline_battery_ = current_battery;
+    baseline_time_ = now;
+    return BT::NodeStatus::SUCCESS;
+  }
+
+  // No meaningful charge increase in 30 minutes — charger problem.
+  RCLCPP_WARN(ctx->node->get_logger(),
+    "IsChargingProgressing: battery only changed %.1f%% in 30 min "
+    "(%.1f%% -> %.1f%%), charger may be broken",
+    increase, baseline_battery_, current_battery);
+  baseline_set_ = false;  // Reset for next charging session.
+  return BT::NodeStatus::FAILURE;
+}
+
 }  // namespace mowgli_behavior
