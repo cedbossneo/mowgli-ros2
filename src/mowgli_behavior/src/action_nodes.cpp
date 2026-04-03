@@ -246,6 +246,16 @@ BT::NodeStatus CalibrateHeadingFromUndock::tick()
     return BT::NodeStatus::SUCCESS;  // non-fatal
   }
 
+  // Only calibrate with RTK fix — without it, GPS position is too noisy
+  // and the computed heading would be wrong.
+  if (!ctx->gps_is_fixed)
+  {
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "CalibrateHeadingFromUndock: no RTK fix, skipping (would corrupt heading)");
+    ctx->undock_start_recorded = false;
+    return BT::NodeStatus::SUCCESS;  // non-fatal
+  }
+
   const double dx = ctx->gps_x - ctx->undock_start_x;
   const double dy = ctx->gps_y - ctx->undock_start_y;
   const double dist = std::sqrt(dx * dx + dy * dy);
