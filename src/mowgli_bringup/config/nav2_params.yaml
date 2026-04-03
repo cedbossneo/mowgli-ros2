@@ -511,6 +511,14 @@ collision_monitor:
     source_timeout: 5.0
     base_shift_correction: true
     stop_pub_timeout: 2.0
+    polygons: ["PolygonStop"]
+    PolygonStop:
+      type: "polygon"
+      points: "[[0.45, 0.20], [0.45, -0.20], [-0.09, -0.20], [-0.09, 0.20]]"
+      action_type: "stop"
+      max_points: 3
+      visualize: true
+      polygon_pub_topic: "polygon_stop"
     observation_sources: ["scan"]
     scan:
       type: "scan"
