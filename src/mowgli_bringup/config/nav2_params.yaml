@@ -505,10 +505,17 @@ collision_monitor:
     use_sim_time: false
     base_frame_id: base_link
     odom_frame_id: odom
+    cmd_vel_in_topic: cmd_vel_nav
+    cmd_vel_out_topic: cmd_vel
     transform_tolerance: 0.5
     source_timeout: 5.0
     base_shift_correction: true
     stop_pub_timeout: 2.0
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: /scan
+      enabled: true
 
 smoother_server:
   ros__parameters:
