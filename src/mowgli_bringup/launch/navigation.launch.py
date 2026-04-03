@@ -19,6 +19,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    ExecuteProcess,
     GroupAction,
     IncludeLaunchDescription,
     LogInfo,
@@ -320,6 +321,60 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ------------------------------------------------------------------
+    # 3b. Set ekf_odom initial heading from dock_pose_yaw.
+    #     On a fresh SLAM map, slam_toolbox starts at identity. The map→odom
+    #     TF equals the odom→base_link TF inverted. By setting ekf_odom's
+    #     initial heading to dock_pose_yaw, the robot appears at the correct
+    #     heading in the map frame from the very first scan.
+    #     Only needed on fresh maps (no posegraph), but harmless on loaded maps.
+    # ------------------------------------------------------------------
+    def _build_initial_pose_cmd(context):
+        rp = {}
+        robot_config = "/ros2_ws/config/mowgli_robot.yaml"
+        if os.path.isfile(robot_config):
+            with open(robot_config, "r") as f:
+                rcfg = yaml.safe_load(f) or {}
+            rp = rcfg.get("mowgli", {}).get("ros__parameters", {})
+        dock_yaw = float(rp.get("dock_pose_yaw", 0.0))
+        dock_x = float(rp.get("dock_pose_x", 0.0))
+        dock_y = float(rp.get("dock_pose_y", 0.0))
+        if dock_yaw == 0.0:
+            return []  # No dock heading configured, skip
+
+        import math
+        qz = math.sin(dock_yaw / 2.0)
+        qw = math.cos(dock_yaw / 2.0)
+
+        # Build the service call YAML payload
+        pose_yaml = (
+            "'{pose: {header: {frame_id: odom}, pose: {pose: {"
+            f"position: {{x: {dock_x}, y: {dock_y}, z: 0.0}}, "
+            f"orientation: {{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}"
+            "}, covariance: ["
+            "0.01, 0,0,0,0,0, 0,0.01,0,0,0,0, 0,0,1e6,0,0,0, "
+            "0,0,0,1e6,0,0, 0,0,0,0,1e6,0, 0,0,0,0,0,0.01"
+            "]}}}'"
+        )
+
+        return [
+            LogInfo(msg=f"[navigation.launch.py] Setting ekf_odom initial heading to {dock_yaw:.3f} rad ({dock_yaw*180/math.pi:.1f} deg)"),
+            TimerAction(
+                period=5.0,
+                actions=[
+                    ExecuteProcess(
+                        cmd=["ros2", "service", "call",
+                             "/set_pose",
+                             "robot_localization/srv/SetPose",
+                             pose_yaml],
+                        output="screen",
+                    ),
+                ],
+            ),
+        ]
+
+    set_initial_pose = OpaqueFunction(function=_build_initial_pose_cmd)
+
+    # ------------------------------------------------------------------
     # 4. Nav2 navigation (controllers, planners, behaviors, BT navigator)
     #    We use navigation_launch.py directly instead of bringup_launch.py
     #    because bringup_launch.py also starts localization (AMCL) which
@@ -369,6 +424,7 @@ def generate_launch_description() -> LaunchDescription:
             slam_toolbox_launch,
             ekf_odom_node,
             ekf_map_node,
+            set_initial_pose,
             nav2_navigation,
         ]
     )
