@@ -58,6 +58,7 @@ private:
   GoalHandle::SharedPtr goal_handle_;
   std::shared_ptr<const CoverageAction::Result> latest_result_;
   bool result_received_{false};
+  uint32_t area_index_{0};
 };
 
 // ---------------------------------------------------------------------------

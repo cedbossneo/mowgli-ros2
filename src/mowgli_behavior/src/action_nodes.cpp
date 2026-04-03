@@ -386,9 +386,12 @@ BT::NodeStatus PublishHighLevelStatus::tick()
   msg.state = state_res.value();
   msg.state_name = name_res.value();
   msg.sub_state_name = "";
-  msg.current_area = -1;
+  msg.current_area = static_cast<int16_t>(ctx->current_area);
   msg.current_path = -1;
   msg.current_path_index = -1;
+  msg.total_swaths = static_cast<int16_t>(ctx->total_swaths);
+  msg.completed_swaths = static_cast<int16_t>(ctx->completed_swaths);
+  msg.skipped_swaths = static_cast<int16_t>(ctx->skipped_swaths);
   msg.gps_quality_percent = ctx->gps_quality;
   msg.battery_percent = ctx->battery_percent;
   msg.is_charging = ctx->latest_power.charger_enabled;

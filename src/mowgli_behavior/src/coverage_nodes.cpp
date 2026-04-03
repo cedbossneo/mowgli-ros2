@@ -91,8 +91,8 @@ BT::NodeStatus ComputeCoverage::onStart()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
 
-  uint32_t area_index = 0u;
-  getInput<uint32_t>("area_index", area_index);
+  area_index_ = 0u;
+  getInput<uint32_t>("area_index", area_index_);
 
   result_received_ = false;
   latest_result_.reset();
@@ -125,7 +125,7 @@ BT::NodeStatus ComputeCoverage::onStart()
     }
 
     auto request = std::make_shared<mowgli_interfaces::srv::GetMowingArea::Request>();
-    request->index = area_index;
+    request->index = area_index_;
 
     auto future = tmp_client->async_send_request(request);
     if (rclcpp::spin_until_future_complete(helper, future, std::chrono::seconds(5)) !=
@@ -138,13 +138,13 @@ BT::NodeStatus ComputeCoverage::onStart()
     auto response = future.get();
     if (!response->success) {
       RCLCPP_ERROR(ctx->node->get_logger(),
-        "ComputeCoverage: map_server returned no area for index %u", area_index);
+        "ComputeCoverage: map_server returned no area for index %u", area_index_);
       return BT::NodeStatus::FAILURE;
     }
 
     if (response->area.is_navigation_area) {
       RCLCPP_WARN(ctx->node->get_logger(),
-        "ComputeCoverage: area %u is navigation-only, skipping", area_index);
+        "ComputeCoverage: area %u is navigation-only, skipping", area_index_);
       return BT::NodeStatus::FAILURE;
     }
 
@@ -245,6 +245,7 @@ BT::NodeStatus ComputeCoverage::onRunning()
   // Store in context.
   ctx->coverage_plan = std::move(plan);
   ctx->next_swath_index = 0;
+  ctx->current_area = static_cast<int>(area_index_);
 
   // Check for a saved checkpoint — resume from where we left off if the
   // plan hash matches (same area, same swath layout).
