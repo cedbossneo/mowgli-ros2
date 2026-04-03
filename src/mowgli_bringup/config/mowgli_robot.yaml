@@ -106,7 +106,7 @@ mowgli:
     # -----------------------------------------------------------------
     dock_pose_x: 0.0              # dock position in map frame (set per-site)
     dock_pose_y: 0.0
-    dock_pose_yaw: 0.0
+    dock_pose_yaw: 4.17            # measured with phone compass (239°)
     undock_distance: 1.5           # reverse distance when undocking (m)
     undock_speed: 0.15             # reverse speed (m/s)
     dock_approach_distance: 1.0    # distance to staging pose in front of dock

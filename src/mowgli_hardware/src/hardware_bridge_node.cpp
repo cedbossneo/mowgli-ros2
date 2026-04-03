@@ -89,7 +89,7 @@ private:
     dock_x_ = declare_parameter<double>("dock_pose_x", 0.0);
     dock_y_ = declare_parameter<double>("dock_pose_y", 0.0);
     dock_yaw_ = declare_parameter<double>("dock_pose_yaw", 0.0);
-    imu_yaw_offset_ = declare_parameter<double>("imu_yaw", 0.0);
+    // imu_yaw parameter is used by URDF for mounting rotation, not needed here
 
     RCLCPP_INFO(get_logger(),
                 "Parameters: serial_port=%s baud_rate=%d heartbeat_rate=%.1f Hz "
@@ -429,36 +429,9 @@ private:
     msg.angular_velocity.y = static_cast<double>(pkt.gyro_rads[1]);
     msg.angular_velocity.z = static_cast<double>(pkt.gyro_rads[2]);
 
-    // Compute heading from magnetometer (atan2 of x,y components).
-    // The mag data is in the IMU frame (x=forward, y=left for REP-103).
-    // atan2(mag_y, mag_x) gives the heading relative to magnetic north.
-    const double mag_x = static_cast<double>(pkt.mag_uT[0]);
-    const double mag_y = static_cast<double>(pkt.mag_uT[1]);
-    // Apply imu_yaw offset to correct for IMU mounting rotation
-    const double mag_heading = std::atan2(-mag_y, mag_x) - imu_yaw_offset_;
-
-    // Track magnetometer heading with EMA when stationary (for dock yaw)
-    if (wheels_stationary_ && (mag_x != 0.0 || mag_y != 0.0))
-    {
-      if (!mag_initialized_)
-      {
-        mag_heading_avg_ = mag_heading;
-        mag_initialized_ = true;
-      }
-      else
-      {
-        // Circular averaging via unit vector EMA
-        constexpr double kMagAlpha = 0.02;
-        mag_sin_avg_ += kMagAlpha * (std::sin(mag_heading) - mag_sin_avg_);
-        mag_cos_avg_ += kMagAlpha * (std::cos(mag_heading) - mag_cos_avg_);
-        mag_heading_avg_ = std::atan2(mag_sin_avg_, mag_cos_avg_);
-      }
-    }
-
-    // Magnetometer heading is tracked but NOT used for dock_yaw.
-    // Magnetometer accuracy is unreliable and conflicts with SLAM heading.
-    // Heading is determined by SLAM + GPS displacement after undock.
-    // dock_yaw_ stays at the user-configured value (or 0.0 = unknown).
+    // Magnetometer data is ignored — uncalibrated on metal robot chassis,
+    // gives ~229° error vs real heading. dock_pose_yaw is set from config
+    // (user measures with phone compass).
 
     // Write resolved dock pose to file for SLAM initialization.
     // On fresh map start, navigation.launch.py reads this file to set
@@ -767,7 +740,6 @@ private:
   double dock_x_{0.0};
   double dock_y_{0.0};
   double dock_yaw_{0.0};
-  double imu_yaw_offset_{0.0};
   bool mow_enabled_{false};
   bool is_charging_{false};
   uint8_t current_mode_{0};
@@ -790,12 +762,7 @@ private:
   double gyro_bias_y_{0.0};
   double gyro_bias_z_{0.0};
 
-  // Magnetometer heading (for dock orientation auto-detection)
-  bool mag_initialized_{false};
   bool dock_pose_written_{false};
-  double mag_heading_avg_{0.0};
-  double mag_sin_avg_{0.0};
-  double mag_cos_avg_{0.0};
 };
 
 }  // namespace mowgli_hardware
