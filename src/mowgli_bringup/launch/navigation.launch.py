@@ -345,27 +345,42 @@ def generate_launch_description() -> LaunchDescription:
         qz = math.sin(dock_yaw / 2.0)
         qw = math.cos(dock_yaw / 2.0)
 
-        # Build the service call YAML payload
-        pose_yaml = (
-            "'{pose: {header: {frame_id: odom}, pose: {pose: {"
-            f"position: {{x: {dock_x}, y: {dock_y}, z: 0.0}}, "
-            f"orientation: {{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}"
-            "}, covariance: ["
-            "0.01, 0,0,0,0,0, 0,0.01,0,0,0,0, 0,0,1e6,0,0,0, "
-            "0,0,0,1e6,0,0, 0,0,0,0,1e6,0, 0,0,0,0,0,0.01"
-            "]}}}'"
+        # Use a Python one-liner via ExecuteProcess to call set_pose.
+        # This avoids YAML quoting issues with ros2 service call.
+        script = (
+            "import rclpy; "
+            "from robot_localization.srv import SetPose; "
+            "import time; "
+            "rclpy.init(); "
+            "node = rclpy.create_node('_set_initial_pose'); "
+            "cli = node.create_client(SetPose, '/set_pose'); "
+            "cli.wait_for_service(timeout_sec=10.0); "
+            "req = SetPose.Request(); "
+            "req.pose.header.frame_id = 'odom'; "
+            f"req.pose.pose.pose.position.x = {dock_x}; "
+            f"req.pose.pose.pose.position.y = {dock_y}; "
+            f"req.pose.pose.pose.orientation.z = {qz}; "
+            f"req.pose.pose.pose.orientation.w = {qw}; "
+            "req.pose.pose.covariance[0] = 0.01; "
+            "req.pose.pose.covariance[7] = 0.01; "
+            "req.pose.pose.covariance[35] = 0.01; "
+            "fut = cli.call_async(req); "
+            "rclpy.spin_until_future_complete(node, fut, timeout_sec=5.0); "
+            f"node.get_logger().info('Set ekf_odom initial pose: yaw={dock_yaw:.3f} rad'); "
+            "node.destroy_node(); "
+            "rclpy.shutdown()"
         )
 
         return [
-            LogInfo(msg=f"[navigation.launch.py] Setting ekf_odom initial heading to {dock_yaw:.3f} rad ({dock_yaw*180/math.pi:.1f} deg)"),
+            LogInfo(msg=(
+                f"[navigation.launch.py] Setting ekf_odom initial heading "
+                f"to {dock_yaw:.3f} rad ({dock_yaw*180/math.pi:.1f} deg)"
+            )),
             TimerAction(
                 period=5.0,
                 actions=[
                     ExecuteProcess(
-                        cmd=["ros2", "service", "call",
-                             "/set_pose",
-                             "robot_localization/srv/SetPose",
-                             pose_yaml],
+                        cmd=["python3", "-c", script],
                         output="screen",
                     ),
                 ],
