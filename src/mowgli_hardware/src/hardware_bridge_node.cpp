@@ -13,6 +13,7 @@
  *   ~/power        mowgli_interfaces/msg/Power
  *   ~/imu/data_raw sensor_msgs/msg/Imu
  *   ~/wheel_odom   nav_msgs/msg/Odometry
+ *   /battery_state sensor_msgs/msg/BatteryState  (for opennav_docking)
  *
  * Subscribed topics:
  *   ~/cmd_vel      geometry_msgs/msg/Twist  → LlCmdVel packet to STM32
@@ -50,6 +51,7 @@
 #include "mowgli_interfaces/srv/mower_control.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "std_msgs/msg/header.hpp"
 
@@ -108,6 +110,7 @@ private:
     pub_power_ = create_publisher<mowgli_interfaces::msg::Power>("~/power", 10);
     pub_imu_ = create_publisher<sensor_msgs::msg::Imu>("~/imu/data_raw", 10);
     pub_wheel_odom_ = create_publisher<nav_msgs::msg::Odometry>("~/wheel_odom", 10);
+    pub_battery_state_ = create_publisher<sensor_msgs::msg::BatteryState>("/battery_state", 10);
     // dock_pose_fix publisher removed — ekf_map doesn't publish TF and nothing
     // reads /odometry/filtered_map. Re-add if ekf_map becomes TF publisher.
   }
@@ -383,6 +386,21 @@ private:
       msg.charger_enabled = (pkt.status_bitmask & STATUS_BIT_CHARGING) != 0u;
       msg.charger_status = msg.charger_enabled ? "charging" : "idle";
       pub_power_->publish(msg);
+    }
+
+    // ---- BatteryState message (for opennav_docking charge detection) ----
+    {
+      auto msg = sensor_msgs::msg::BatteryState{};
+      msg.header.stamp = stamp;
+      msg.header.frame_id = "base_link";
+      msg.voltage = pkt.v_system;
+      msg.current = pkt.charging_current;
+      msg.percentage = static_cast<float>(pkt.batt_percentage) / 100.0f;
+      msg.power_supply_status = is_charging_
+          ? sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_CHARGING
+          : sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_DISCHARGING;
+      msg.present = true;
+      pub_battery_state_->publish(msg);
     }
   }
 
@@ -688,6 +706,7 @@ private:
   rclcpp::Publisher<mowgli_interfaces::msg::Power>::SharedPtr pub_power_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr pub_imu_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_wheel_odom_;
+  rclcpp::Publisher<sensor_msgs::msg::BatteryState>::SharedPtr pub_battery_state_;
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_;
   rclcpp::Subscription<mowgli_interfaces::msg::HighLevelStatus>::SharedPtr sub_hl_status_;
