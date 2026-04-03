@@ -19,7 +19,6 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    ExecuteProcess,
     GroupAction,
     IncludeLaunchDescription,
     LogInfo,
@@ -322,73 +321,13 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ------------------------------------------------------------------
-    # 3b. Set ekf_odom initial heading from dock_pose_yaw.
-    #     On a fresh SLAM map, slam_toolbox starts at identity. The map→odom
-    #     TF equals the odom→base_link TF inverted. By setting ekf_odom's
-    #     initial heading to dock_pose_yaw, the robot appears at the correct
-    #     heading in the map frame from the very first scan.
-    #     Only needed on fresh maps (no posegraph), but harmless on loaded maps.
+    # 3b. NO initial heading rotation on ekf_odom.
+    #     The map frame stays aligned with GPS: X=east, Y=north.
+    #     This ensures mowing area coordinates (stored in GPS frame) match
+    #     the map frame without rotation.
+    #     dock_pose_yaw is only used by dock_pose_fix to tell the EKF the
+    #     robot's heading while docked (not to rotate the whole frame).
     # ------------------------------------------------------------------
-    def _build_initial_pose_cmd(context):
-        rp = {}
-        robot_config = "/ros2_ws/config/mowgli_robot.yaml"
-        if os.path.isfile(robot_config):
-            with open(robot_config, "r") as f:
-                rcfg = yaml.safe_load(f) or {}
-            rp = rcfg.get("mowgli", {}).get("ros__parameters", {})
-        dock_yaw = float(rp.get("dock_pose_yaw", 0.0))
-        dock_x = float(rp.get("dock_pose_x", 0.0))
-        dock_y = float(rp.get("dock_pose_y", 0.0))
-        if dock_yaw == 0.0:
-            return []  # No dock heading configured, skip
-
-        import math
-        qz = math.sin(dock_yaw / 2.0)
-        qw = math.cos(dock_yaw / 2.0)
-
-        # Use a Python one-liner via ExecuteProcess to call set_pose.
-        # This avoids YAML quoting issues with ros2 service call.
-        script = (
-            "import rclpy; "
-            "from robot_localization.srv import SetPose; "
-            "import time; "
-            "rclpy.init(); "
-            "node = rclpy.create_node('_set_initial_pose'); "
-            "cli = node.create_client(SetPose, '/set_pose'); "
-            "cli.wait_for_service(timeout_sec=10.0); "
-            "req = SetPose.Request(); "
-            "req.pose.header.frame_id = 'odom'; "
-            f"req.pose.pose.pose.position.x = {dock_x}; "
-            f"req.pose.pose.pose.position.y = {dock_y}; "
-            f"req.pose.pose.pose.orientation.z = {qz}; "
-            f"req.pose.pose.pose.orientation.w = {qw}; "
-            "req.pose.pose.covariance[0] = 0.01; "
-            "req.pose.pose.covariance[7] = 0.01; "
-            "req.pose.pose.covariance[35] = 0.01; "
-            "fut = cli.call_async(req); "
-            "rclpy.spin_until_future_complete(node, fut, timeout_sec=5.0); "
-            f"node.get_logger().info('Set ekf_odom initial pose: yaw={dock_yaw:.3f} rad'); "
-            "node.destroy_node(); "
-            "rclpy.shutdown()"
-        )
-
-        return [
-            LogInfo(msg=(
-                f"[navigation.launch.py] Setting ekf_odom initial heading "
-                f"to {dock_yaw:.3f} rad ({dock_yaw*180/math.pi:.1f} deg)"
-            )),
-            TimerAction(
-                period=5.0,
-                actions=[
-                    ExecuteProcess(
-                        cmd=["python3", "-c", script],
-                        output="screen",
-                    ),
-                ],
-            ),
-        ]
-
-    set_initial_pose = OpaqueFunction(function=_build_initial_pose_cmd)
 
     # ------------------------------------------------------------------
     # 4. Nav2 navigation (controllers, planners, behaviors, BT navigator)
@@ -441,7 +380,6 @@ def generate_launch_description() -> LaunchDescription:
             slam_toolbox_launch,
             ekf_odom_node,
             ekf_map_node,
-            set_initial_pose,
             nav2_navigation,
         ]
     )
