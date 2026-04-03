@@ -294,25 +294,47 @@ void ExecuteSwathBySwath::sendSwathGoal(const BTContext::Swath & swath)
     swath_index_ + 1, total_swaths_, len);
 }
 
-void ExecuteSwathBySwath::setBladeEnabled(bool enabled)
+bool ExecuteSwathBySwath::setBladeEnabled(bool enabled)
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
 
-  if (!blade_client_) {
-    blade_client_ = ctx->node->create_client<mowgli_interfaces::srv::MowerControl>(
+  // Use a temporary node to spin the service call synchronously.
+  // The main node is already being spun by the executor, so we cannot
+  // use spin_until_future_complete on it directly.
+  auto tmp_node = rclcpp::Node::make_shared("_swath_blade_helper");
+  auto tmp_client = tmp_node->create_client<mowgli_interfaces::srv::MowerControl>(
       "/hardware_bridge/mower_control");
-  }
 
-  if (!blade_client_->service_is_ready()) {
+  if (!tmp_client->wait_for_service(std::chrono::milliseconds(500))) {
     RCLCPP_WARN(ctx->node->get_logger(),
       "ExecuteSwathBySwath: blade service unavailable (sim mode)");
-    return;
+    return false;
   }
 
   auto req = std::make_shared<mowgli_interfaces::srv::MowerControl::Request>();
   req->mow_enabled = enabled ? 1u : 0u;
   req->mow_direction = 0u;
-  blade_client_->async_send_request(req);
+
+  auto future = tmp_client->async_send_request(req);
+  auto status = rclcpp::spin_until_future_complete(tmp_node, future, std::chrono::seconds(2));
+
+  if (status != rclcpp::FutureReturnCode::SUCCESS) {
+    RCLCPP_ERROR(ctx->node->get_logger(),
+      "ExecuteSwathBySwath: blade control timed out — blade state unknown!");
+    return false;
+  }
+
+  auto response = future.get();
+  if (!response->success) {
+    RCLCPP_ERROR(ctx->node->get_logger(),
+      "ExecuteSwathBySwath: hardware reported failure setting blade %s",
+      enabled ? "ON" : "OFF");
+    return false;
+  }
+
+  RCLCPP_INFO(ctx->node->get_logger(),
+    "ExecuteSwathBySwath: blade confirmed %s", enabled ? "ON" : "OFF");
+  return true;
 }
 
 bool ExecuteSwathBySwath::advanceToNextSwath()

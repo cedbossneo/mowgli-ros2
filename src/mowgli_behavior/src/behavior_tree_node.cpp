@@ -110,13 +110,42 @@ private:
                                                    context_->boundary_violation = msg->data;
                                                  });
 
-    // GPS position for heading calibration during undock
+    // GPS position and quality for heading calibration during undock
     gps_sub_ = create_subscription<mowgli_interfaces::msg::AbsolutePose>(
         "/gps/absolute_pose", 10,
         [this](mowgli_interfaces::msg::AbsolutePose::ConstSharedPtr msg)
         {
+          using AP = mowgli_interfaces::msg::AbsolutePose;
+
           context_->gps_x = msg->pose.pose.position.x;
           context_->gps_y = msg->pose.pose.position.y;
+
+          // Derive fix type from flags:
+          //   FLAG_GPS_RTK_FIXED=2 → fix_type 4 (RTK fixed)
+          //   FLAG_GPS_RTK_FLOAT=4 → fix_type 5 (RTK float)
+          //   FLAG_GPS_RTK=1       → fix_type 2 (DGPS/RTK)
+          //   otherwise            → fix_type 0 (no fix / autonomous)
+          if (msg->flags & AP::FLAG_GPS_RTK_FIXED)
+          {
+            context_->gps_fix_type = 4;
+          }
+          else if (msg->flags & AP::FLAG_GPS_RTK_FLOAT)
+          {
+            context_->gps_fix_type = 5;
+          }
+          else if (msg->flags & AP::FLAG_GPS_RTK)
+          {
+            context_->gps_fix_type = 2;
+          }
+          else
+          {
+            context_->gps_fix_type = 0;
+          }
+
+          // RTK fixed (fix_type >= 4) with reasonable accuracy → GPS is fixed.
+          context_->gps_is_fixed = (context_->gps_fix_type >= 4) &&
+                                   (msg->position_accuracy < 0.1f);
+          context_->gps_quality = std::clamp(1.0f - msg->position_accuracy, 0.0f, 1.0f);
         });
 
     RCLCPP_DEBUG(get_logger(), "Topic subscribers created");
