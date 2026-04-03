@@ -89,6 +89,9 @@ def generate_launch_description() -> LaunchDescription:
     gps_y   = str(robot_params.get("gps_y", "0.0"))
     gps_z   = str(robot_params.get("gps_z", "0.20"))
 
+    # Chassis geometry offset from base_link (wheel axis centre)
+    chassis_center_x = str(robot_params.get("chassis_center_x", "0.18"))
+
     robot_description_content = Command(
         [
             FindExecutable(name="xacro"),
@@ -105,6 +108,7 @@ def generate_launch_description() -> LaunchDescription:
             " gps_x:=", gps_x,
             " gps_y:=", gps_y,
             " gps_z:=", gps_z,
+            " chassis_center_x:=", chassis_center_x,
         ]
     )
 

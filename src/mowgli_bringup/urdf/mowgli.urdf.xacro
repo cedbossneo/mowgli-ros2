@@ -22,12 +22,12 @@
   <!-- ================================================================
        Configurable arguments (can be overridden via xacro command-line)
        ================================================================ -->
-  <xacro:arg name="lidar_x"   default="0.20"/>
+  <xacro:arg name="lidar_x"   default="0.38"/>
   <xacro:arg name="lidar_y"   default="0.0"/>
   <xacro:arg name="lidar_z"   default="0.22"/>
   <xacro:arg name="lidar_yaw" default="0.0"/>
 
-  <xacro:arg name="imu_x"     default="0.0"/>
+  <xacro:arg name="imu_x"     default="0.18"/>
   <xacro:arg name="imu_y"     default="0.0"/>
   <xacro:arg name="imu_z"     default="0.095"/>
   <xacro:arg name="imu_yaw"   default="0.0"/>
@@ -35,6 +35,9 @@
   <xacro:arg name="gps_x"     default="0.0"/>
   <xacro:arg name="gps_y"     default="0.0"/>
   <xacro:arg name="gps_z"     default="0.20"/>
+
+  <!-- Chassis geometry offset: distance from base_link (wheel axis) to chassis centre -->
+  <xacro:arg name="chassis_center_x" default="0.18"/>
 
   <!-- ================================================================
        Properties
@@ -48,14 +51,14 @@
   <xacro:property name="wheel_width"     value="0.04"/>
   <xacro:property name="wheel_track"     value="0.40"/>  <!-- centre-to-centre -->
   <xacro:property name="wheel_mass"      value="0.5"/>
-  <!-- Rear wheels are offset behind base_link centre -->
-  <xacro:property name="wheel_x_offset"  value="-0.18"/>
+  <!-- Drive wheels at base_link (centre of rear wheel axis) -->
+  <xacro:property name="wheel_x_offset"  value="0.0"/>
 
   <!-- Front caster wheels (smaller) -->
   <xacro:property name="caster_radius"   value="0.03"/>
   <xacro:property name="caster_width"    value="0.03"/>
   <xacro:property name="caster_mass"     value="0.2"/>
-  <xacro:property name="caster_x_offset" value="0.22"/>
+  <xacro:property name="caster_x_offset" value="0.40"/>
   <xacro:property name="caster_track"    value="0.36"/>  <!-- centre-to-centre -->
 
   <xacro:property name="base_mass"       value="8.76"/>
@@ -123,11 +126,12 @@
   </joint>
 
   <!-- ================================================================
-       base_link  (geometric centre of chassis at wheel axle height)
+       base_link  (centre of rear drive wheel axis at wheel axle height)
        ================================================================ -->
   <link name="base_link">
     <visual>
-      <origin xyz="0 0 ${base_height/2}" rpy="0 0 0"/>
+      <!-- Chassis centre offset forward from wheel axis -->
+      <origin xyz="$(arg chassis_center_x) 0 ${base_height/2}" rpy="0 0 0"/>
       <geometry>
         <box size="${base_length} ${base_width} ${base_height}"/>
       </geometry>
@@ -136,7 +140,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0 0 ${base_height/2}" rpy="0 0 0"/>
+      <origin xyz="$(arg chassis_center_x) 0 ${base_height/2}" rpy="0 0 0"/>
       <geometry>
         <box size="${base_length} ${base_width} ${base_height}"/>
       </geometry>
@@ -175,7 +179,7 @@
     <joint name="${side}_wheel_joint" type="continuous">
       <parent link="base_link"/>
       <child  link="${side}_wheel_link"/>
-      <!-- Rear drive wheels: offset behind base_link centre -->
+      <!-- Drive wheels at base_link origin -->
       <origin xyz="${wheel_x_offset} ${y_reflect * wheel_track/2} 0" rpy="0 0 0"/>
       <axis xyz="0 1 0"/>
       <dynamics damping="0.1" friction="0.1"/>
@@ -269,8 +273,8 @@
   <joint name="blade_joint" type="continuous">
     <parent link="base_link"/>
     <child  link="blade_link"/>
-    <!-- Blade disc centred under base, matching real robot -->
-    <origin xyz="0 0 ${-wheel_radius + 0.05}" rpy="0 0 0"/>
+    <!-- Blade disc centred under chassis -->
+    <origin xyz="$(arg chassis_center_x) 0 ${-wheel_radius + 0.05}" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
   </joint>
 

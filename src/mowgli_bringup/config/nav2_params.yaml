@@ -248,8 +248,10 @@ global_costmap:
       # Allow up to 60s for map→base_link TF to appear (SLAM needs time to
       # initialize scan matching before publishing map→odom).
       transform_tolerance: 60.0
-      # Rectangular footprint from URDF: 0.54m x 0.40m (base_link collision box)
-      footprint: "[[0.27, 0.20], [0.27, -0.20], [-0.27, -0.20], [-0.27, 0.20]]"
+      # Rectangular footprint: 0.54m x 0.40m, base_link at rear wheel axis
+      # Front: chassis_center_x + base_length/2 = 0.18 + 0.27 = 0.45
+      # Rear:  chassis_center_x - base_length/2 = 0.18 - 0.27 = -0.09
+      footprint: "[[0.45, 0.20], [0.45, -0.20], [-0.09, -0.20], [-0.09, 0.20]]"
       resolution: 0.05
       track_unknown_space: false
       # Rolling window large enough to cover transit across any garden.
@@ -306,7 +308,7 @@ local_costmap:
       publish_frequency: 2.0
       global_frame: odom
       robot_base_frame: base_link
-      footprint: "[[0.275, 0.20], [0.275, -0.20], [-0.275, -0.20], [-0.275, 0.20]]"
+      footprint: "[[0.45, 0.20], [0.45, -0.20], [-0.09, -0.20], [-0.09, 0.20]]"
       resolution: 0.05
       rolling_window: true
       width: 6
