@@ -134,20 +134,9 @@ ekf_map:
     # disagree (due to float noise) will be rejected.
     pose0_rejection_threshold: 3.0
 
-    # Dock pose fix: when charging, the hardware bridge publishes the
-    # known dock position (and orientation if configured) with very tight
-    # covariance. This anchors the robot to the dock and prevents drift.
-    # When not charging, nothing is published so this has no effect.
-    pose1: /dock_pose_fix
-    pose1_config: [true,  true,  false,
-                   false, false, true,
-                   false, false, false,
-                   false, false, false,
-                   false, false, false]
-    pose1_queue_size: 5
-    pose1_nodelay: false
-    pose1_differential: false
-    pose1_relative: false
+    # Dock pose fix removed — ekf_map doesn't publish TF and nothing reads
+    # its output. SLAM is the sole TF authority. Re-add if ekf_map becomes
+    # the map→odom TF publisher.
 
     # SLAM heading: slam_heading_node extracts yaw from SLAM's scan matching
     # (slam_map→odom TF) and publishes it as PoseWithCovarianceStamped.
