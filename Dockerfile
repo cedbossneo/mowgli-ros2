@@ -65,6 +65,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Simulation bridge (needed at runtime for ros_gz_bridge topic bridging)
     ros-jazzy-ros-gz-sim \
     ros-jazzy-ros-gz-bridge \
+    # DDS middleware — Cyclone DDS is more reliable than FastRTPS on ARM
+    # (no shared memory, no stale /dev/shm segments, better service discovery)
+    ros-jazzy-rmw-cyclonedds-cpp \
     # Utilities
     python3-argcomplete \
  && rm -rf /var/lib/apt/lists/*
@@ -226,6 +229,10 @@ COPY src/mowgli_localization/config/  /ros2_ws/install/mowgli_localization/share
 # See: https://github.com/RobotWebTools/rosbridge_suite/issues/965
 COPY scripts/patch_rosbridge.py /tmp/patch_rosbridge.py
 RUN python3 /tmp/patch_rosbridge.py && rm /tmp/patch_rosbridge.py
+
+# Use Cyclone DDS — FastRTPS shared memory causes stale /dev/shm segments
+# and unreliable service discovery on ARM boards
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
 # Entrypoint script sources both ROS and workspace setups before exec'ing CMD
 COPY scripts/ros2_entrypoint.sh /ros2_entrypoint.sh
