@@ -225,6 +225,10 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
+    # Topic flow: controller_server → cmd_vel_nav → velocity_smoother →
+    #             cmd_vel_smoothed → collision_monitor → cmd_vel → hardware
+    input_topic: cmd_vel_nav
+    output_topic: cmd_vel_smoothed
     max_velocity: [0.3, 0.0, 1.0]
     min_velocity: [-0.3, 0.0, -1.0]
     max_accel: [0.3, 0.0, 1.5]
@@ -418,26 +422,27 @@ collision_monitor:
     source_timeout: 1.0
     base_shift_correction: true
     stop_pub_timeout: 2.0
-    polygons: ["PolygonStop", "FootprintApproach"]
-    # Stop zone: tight safety box around the robot.
-    # Forward: 0.45m (robot radius 0.22 + 0.23m braking at 0.3m/s).
-    # Lateral: 0.30m (robot radius + 0.08m margin).
-    #
-    # NOTE: Disabled in simulation because the Gazebo LiDAR (range_min=0.10m)
-    # produces self-reflections from the robot chassis at ~0.26-0.30m.  These
-    # phantom readings fall inside the stop polygon and permanently block the
-    # robot.  Re-enable on real hardware where the LiDAR is mounted above the
-    # chassis and self-reflections do not occur.
+    polygons: ["PolygonStop", "PolygonSlow", "FootprintApproach"]
+    # Stop zone: tight safety box matching the robot footprint.
+    # front 0.45m, rear -0.09m, width +/-0.20m.
     PolygonStop:
       type: "polygon"
-      points: "[[0.45, 0.30], [0.45, -0.30], [-0.25, -0.30], [-0.25, 0.30]]"
+      points: "[[0.45, 0.20], [0.45, -0.20], [-0.09, -0.20], [-0.09, 0.20]]"
       action_type: "stop"
       min_points: 2
       visualize: true
       polygon_pub_topic: "polygon_stop"
-      # LiDAR range_min=0.35m in model.sdf filters chassis self-reflections.
-      # PolygonStop provides hard safety stop if something enters the tight
-      # safety zone around the robot.
+      enabled: true
+    # Slowdown zone: extends 0.30m beyond the robot front for early braking.
+    # front 0.75m (0.45 + 0.30), rear -0.09m, width +/-0.30m.
+    PolygonSlow:
+      type: "polygon"
+      points: "[[0.75, 0.30], [0.75, -0.30], [-0.09, -0.30], [-0.09, 0.30]]"
+      action_type: "slowdown"
+      slowdown_ratio: 0.5
+      min_points: 2
+      visualize: true
+      polygon_pub_topic: "polygon_slow"
       enabled: true
     # Approach: uses dynamic robot footprint with velocity projection.
     # Gradually slows when predicted collision is within time_before_collision.
@@ -450,9 +455,6 @@ collision_monitor:
       min_points: 1
       visualize: true
       enabled: true
-    # Scan source for obstacle detection. The Gazebo LiDAR uses
-    # visibility_mask to exclude the robot's own mesh, preventing
-    # self-reflections from triggering false stops.
     observation_sources: ["scan"]
     scan:
       type: "scan"
@@ -497,35 +499,6 @@ coverage_server:
     coordinates_in_cartesian_frame: true
 
 route_server:
-  ros__parameters:
-    use_sim_time: false
-
-collision_monitor:
-  ros__parameters:
-    use_sim_time: false
-    base_frame_id: base_link
-    odom_frame_id: odom
-    cmd_vel_in_topic: cmd_vel_nav
-    cmd_vel_out_topic: cmd_vel
-    transform_tolerance: 0.5
-    source_timeout: 5.0
-    base_shift_correction: true
-    stop_pub_timeout: 2.0
-    polygons: ["PolygonStop"]
-    PolygonStop:
-      type: "polygon"
-      points: "[[0.45, 0.20], [0.45, -0.20], [-0.09, -0.20], [-0.09, 0.20]]"
-      action_type: "stop"
-      max_points: 3
-      visualize: true
-      polygon_pub_topic: "polygon_stop"
-    observation_sources: ["scan"]
-    scan:
-      type: "scan"
-      topic: /scan
-      enabled: true
-
-smoother_server:
   ros__parameters:
     use_sim_time: false
 
