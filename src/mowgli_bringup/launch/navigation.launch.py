@@ -404,7 +404,7 @@ def generate_launch_description() -> LaunchDescription:
     # planner_server's global costmap times out waiting for the map frame
     # and the lifecycle_manager aborts the entire bringup.
     nav2_navigation = TimerAction(
-        period=20.0,
+        period=30.0,
         actions=[
             GroupAction(
                 actions=[
