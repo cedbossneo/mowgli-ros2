@@ -496,6 +496,20 @@ coverage_server:
     # Coordinate system
     coordinates_in_cartesian_frame: true
 
+route_server:
+  ros__parameters:
+    use_sim_time: false
+
+collision_monitor:
+  ros__parameters:
+    use_sim_time: false
+    base_frame_id: base_link
+    odom_frame_id: odom
+    transform_tolerance: 0.5
+    source_timeout: 5.0
+    base_shift_correction: true
+    stop_pub_timeout: 2.0
+
 lifecycle_manager_navigation:
   ros__parameters:
     use_sim_time: false
