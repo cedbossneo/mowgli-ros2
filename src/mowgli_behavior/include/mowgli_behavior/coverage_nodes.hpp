@@ -99,7 +99,7 @@ private:
     const BTContext::Swath & swath, const rclcpp::Node::SharedPtr & node) const;
   void sendTransitGoal(const BTContext::Swath & swath);
   void sendSwathGoal(const BTContext::Swath & swath);
-  bool setBladeEnabled(bool enabled);
+  void setBladeEnabled(bool enabled);
   bool advanceToNextSwath();
   bool checkStuck(const std::shared_ptr<BTContext> & ctx);
 
@@ -113,8 +113,7 @@ private:
   // Action clients
   rclcpp_action::Client<Nav2Navigate>::SharedPtr nav_client_;
   rclcpp_action::Client<Nav2FollowPath>::SharedPtr follow_client_;
-  // blade_client_ removed — setBladeEnabled() uses a temporary node for
-  // synchronous service calls to confirm blade state changes.
+  rclcpp::Client<mowgli_interfaces::srv::MowerControl>::SharedPtr blade_client_;
 
   // Goal handles
   std::shared_future<NavGoalHandle::SharedPtr> nav_future_;

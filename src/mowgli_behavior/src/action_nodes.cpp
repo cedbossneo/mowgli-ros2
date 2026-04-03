@@ -117,41 +117,14 @@ BT::NodeStatus SetMowerEnabled::tick()
   request->mow_enabled = enabled ? 1u : 0u;
   request->mow_direction = 0u;
 
-  // Use a temporary node to spin the service call synchronously.
-  // The main node is already being spun by the executor, so we cannot
-  // use spin_until_future_complete on it directly.
-  auto tmp_node = rclcpp::Node::make_shared("_set_mower_enabled_helper");
-  auto tmp_client = tmp_node->create_client<mowgli_interfaces::srv::MowerControl>(
-      "/hardware_bridge/mower_control");
-
-  if (!tmp_client->wait_for_service(std::chrono::milliseconds(500)))
-  {
-    RCLCPP_ERROR(ctx->node->get_logger(),
-                 "SetMowerEnabled: service disappeared while sending request");
-    return BT::NodeStatus::FAILURE;
-  }
-
-  auto future = tmp_client->async_send_request(request);
-  auto status = rclcpp::spin_until_future_complete(tmp_node, future, std::chrono::seconds(2));
-
-  if (status != rclcpp::FutureReturnCode::SUCCESS)
-  {
-    RCLCPP_ERROR(ctx->node->get_logger(),
-                 "SetMowerEnabled: service call timed out or failed — blade state unknown!");
-    return BT::NodeStatus::FAILURE;
-  }
-
-  auto response = future.get();
-  if (!response->success)
-  {
-    RCLCPP_ERROR(ctx->node->get_logger(),
-                 "SetMowerEnabled: hardware reported failure setting mow_enabled=%s",
-                 enabled ? "true" : "false");
-    return BT::NodeStatus::FAILURE;
-  }
+  // Fire-and-forget: the firmware is the safety authority for the blade.
+  // It has its own lift/tilt/emergency checks and will refuse or stop the
+  // blade regardless of what ROS2 requests.
+  auto future = client_->async_send_request(request);
+  (void)future;
 
   RCLCPP_INFO(ctx->node->get_logger(),
-              "SetMowerEnabled: mow_enabled confirmed %s",
+              "SetMowerEnabled: requested mow_enabled=%s",
               enabled ? "true" : "false");
 
   return BT::NodeStatus::SUCCESS;
