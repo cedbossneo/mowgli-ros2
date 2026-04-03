@@ -96,13 +96,36 @@ def generate_launch_description() -> LaunchDescription:
     localization_params = os.path.join(bringup_dir, "config", "localization.yaml")
     nav2_params_file = os.path.join(bringup_dir, "config", "nav2_params.yaml")
 
-    # Rewrite use_sim_time throughout nav2_params.yaml so that all Nav2 nodes
-    # use the correct clock source.  Nav2's navigation_launch.py does NOT
-    # inject use_sim_time into the params file automatically.
+    # Compute robot footprint from mowgli_robot.yaml so Nav2 costmaps
+    # match the actual chassis shape regardless of mower model.
+    robot_config_file = os.path.join(bringup_dir, "config", "mowgli_robot.yaml")
+    footprint_str = ""
+    if os.path.isfile(robot_config_file):
+        with open(robot_config_file, "r") as f:
+            rcfg = yaml.safe_load(f) or {}
+        rp = rcfg.get("mowgli", {}).get("ros__parameters", {})
+        cl = float(rp.get("chassis_length", 0.54))
+        cw = float(rp.get("chassis_width", 0.40))
+        ccx = float(rp.get("chassis_center_x", 0.18))
+        fp_f = ccx + cl / 2.0
+        fp_r = ccx - cl / 2.0
+        fp_hw = cw / 2.0
+        footprint_str = (
+            f"[[{fp_f:.3f}, {fp_hw:.3f}], "
+            f"[{fp_f:.3f}, {-fp_hw:.3f}], "
+            f"[{fp_r:.3f}, {-fp_hw:.3f}], "
+            f"[{fp_r:.3f}, {fp_hw:.3f}]]"
+        )
+
+    # Rewrite use_sim_time and footprint throughout nav2_params.yaml.
+    param_rewrites = {"use_sim_time": use_sim_time}
+    if footprint_str:
+        param_rewrites["footprint"] = footprint_str
+
     nav2_params = RewrittenYaml(
         source_file=nav2_params_file,
         root_key="",
-        param_rewrites={"use_sim_time": use_sim_time},
+        param_rewrites=param_rewrites,
         convert_types=True,
     )
 

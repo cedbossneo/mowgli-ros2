@@ -248,9 +248,7 @@ global_costmap:
       # Allow up to 60s for map→base_link TF to appear (SLAM needs time to
       # initialize scan matching before publishing map→odom).
       transform_tolerance: 60.0
-      # Rectangular footprint: 0.54m x 0.40m, base_link at rear wheel axis
-      # Front: chassis_center_x + base_length/2 = 0.18 + 0.27 = 0.45
-      # Rear:  chassis_center_x - base_length/2 = 0.18 - 0.27 = -0.09
+      # Footprint computed from mowgli_robot.yaml at launch time
       footprint: "[[0.45, 0.20], [0.45, -0.20], [-0.09, -0.20], [-0.09, 0.20]]"
       resolution: 0.05
       track_unknown_space: false
