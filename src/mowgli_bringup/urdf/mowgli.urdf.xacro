@@ -32,7 +32,7 @@
   <xacro:arg name="imu_z"     default="0.095"/>
   <xacro:arg name="imu_yaw"   default="0.0"/>
 
-  <xacro:arg name="gps_x"     default="0.0"/>
+  <xacro:arg name="gps_x"     default="0.3"/>
   <xacro:arg name="gps_y"     default="0.0"/>
   <xacro:arg name="gps_z"     default="0.20"/>
 
@@ -49,7 +49,7 @@
   <!-- Rear drive wheels (from real URDF: diameter 0.0895m) -->
   <xacro:property name="wheel_radius"    value="0.04475"/>
   <xacro:property name="wheel_width"     value="0.04"/>
-  <xacro:property name="wheel_track"     value="0.40"/>  <!-- centre-to-centre -->
+  <xacro:property name="wheel_track"     value="0.325"/>  <!-- centre-to-centre -->
   <xacro:property name="wheel_mass"      value="0.5"/>
   <!-- Drive wheels at base_link (centre of rear wheel axis) -->
   <xacro:property name="wheel_x_offset"  value="0.0"/>
