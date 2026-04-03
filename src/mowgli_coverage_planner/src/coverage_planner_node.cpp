@@ -25,9 +25,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -41,6 +43,7 @@
 #include "mowgli_coverage_planner/polygon_utils.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
@@ -62,6 +65,10 @@ CoveragePlannerNode::CoveragePlannerNode(const rclcpp::NodeOptions & options)
   min_turning_radius_ = declare_parameter<double>("min_turning_radius", 0.01);
   decompose_cells_ = declare_parameter<bool>("decompose_cells", true);
   map_frame_ = declare_parameter<std::string>("map_frame", "map");
+  mowing_speed_ = declare_parameter<double>("mowing_speed", 0.15);
+  transit_speed_ = declare_parameter<double>("transit_speed", 0.3);
+  route_graph_filepath_ = declare_parameter<std::string>(
+    "route_graph_filepath", "/tmp/mowing_route.geojson");
 
   if (tool_width_ <= 0.0) {
     RCLCPP_WARN(get_logger(), "tool_width must be positive; clamping to 0.01 m");
@@ -93,6 +100,9 @@ CoveragePlannerNode::CoveragePlannerNode(const rclcpp::NodeOptions & options)
     rclcpp::QoS(1).transient_local());
   outline_pub_ = create_publisher<nav_msgs::msg::Path>(
     "~/coverage_outline",
+    rclcpp::QoS(1).transient_local());
+  route_graph_pub_ = create_publisher<std_msgs::msg::String>(
+    "~/route_graph",
     rclcpp::QoS(1).transient_local());
 
   costmap_min_cluster_size_ = declare_parameter<int>("costmap_min_cluster_size", 10);
@@ -635,6 +645,9 @@ void CoveragePlannerNode::execute(
   path_pub_->publish(swath_path);
   outline_pub_->publish(outline_path);
 
+  // Generate and publish GeoJSON route graph for Nav2 route_server.
+  publish_route_graph(swath_starts, swath_ends, mowing_speed_, transit_speed_);
+
   RCLCPP_INFO(get_logger(),
     "Coverage plan: %zu path states, %zu swaths, %.1f m total, %.2f m2 area",
     swath_path.poses.size(), swath_starts.size(),
@@ -642,6 +655,131 @@ void CoveragePlannerNode::execute(
 
   publish_feedback(100.0f, "path_planning");
   goal_handle->succeed(result);
+}
+
+// ---------------------------------------------------------------------------
+// publish_route_graph — convert swaths to GeoJSON for Nav2 route_server
+// ---------------------------------------------------------------------------
+
+void CoveragePlannerNode::publish_route_graph(
+  const std::vector<geometry_msgs::msg::Point> & swath_starts,
+  const std::vector<geometry_msgs::msg::Point> & swath_ends,
+  double mowing_speed,
+  double transit_speed)
+{
+  if (swath_starts.empty() || swath_starts.size() != swath_ends.size()) {
+    RCLCPP_WARN(get_logger(), "No swaths to convert to route graph");
+    return;
+  }
+
+  // Build node list: for N swaths we have 2N unique endpoints.
+  // Node IDs: swath i start = 2*i, swath i end = 2*i+1.
+  //
+  // Edge types:
+  //   - Swath edge: connects start[i] -> end[i]  (blade_on, mowing_speed)
+  //   - Turn edge:  connects end[i] -> start[i+1] (blade_off, transit_speed)
+
+  std::ostringstream json;
+  json << std::fixed;
+  json.precision(6);
+
+  json << "{\n";
+  json << "  \"type\": \"FeatureCollection\",\n";
+  json << "  \"features\": [\n";
+
+  const size_t n_swaths = swath_starts.size();
+  const size_t n_nodes = 2 * n_swaths;
+  const size_t n_edges = n_swaths + (n_swaths > 0 ? n_swaths - 1 : 0);
+  bool first = true;
+
+  // --- Point nodes ---
+  for (size_t i = 0; i < n_swaths; ++i) {
+    // Start node
+    if (!first) { json << ",\n"; }
+    first = false;
+    json << "    {\"type\": \"Feature\", \"geometry\": {\"type\": \"Point\", "
+         << "\"coordinates\": [" << swath_starts[i].x << ", " << swath_starts[i].y
+         << "]}, \"properties\": {\"id\": " << (2 * i) << "}}";
+
+    // End node
+    json << ",\n";
+    json << "    {\"type\": \"Feature\", \"geometry\": {\"type\": \"Point\", "
+         << "\"coordinates\": [" << swath_ends[i].x << ", " << swath_ends[i].y
+         << "]}, \"properties\": {\"id\": " << (2 * i + 1) << "}}";
+  }
+
+  // --- Swath edges (blade_on) ---
+  size_t edge_id = 0;
+  for (size_t i = 0; i < n_swaths; ++i) {
+    const size_t start_id = 2 * i;
+    const size_t end_id = 2 * i + 1;
+    const double dx = swath_ends[i].x - swath_starts[i].x;
+    const double dy = swath_ends[i].y - swath_starts[i].y;
+    const double cost = std::hypot(dx, dy);
+
+    json << ",\n";
+    json << "    {\"type\": \"Feature\", \"geometry\": {\"type\": \"MultiLineString\", "
+         << "\"coordinates\": [[["
+         << swath_starts[i].x << ", " << swath_starts[i].y << "], ["
+         << swath_ends[i].x << ", " << swath_ends[i].y
+         << "]]]}, \"properties\": {"
+         << "\"id\": " << edge_id++
+         << ", \"startid\": " << start_id
+         << ", \"endid\": " << end_id
+         << ", \"cost\": " << cost
+         << ", \"speed_limit\": " << mowing_speed
+         << ", \"operation\": \"blade_on\""
+         << "}}";
+  }
+
+  // --- Turn edges (blade_off) ---
+  for (size_t i = 0; i + 1 < n_swaths; ++i) {
+    const size_t start_id = 2 * i + 1;  // end of swath i
+    const size_t end_id = 2 * (i + 1);  // start of swath i+1
+    const double dx = swath_starts[i + 1].x - swath_ends[i].x;
+    const double dy = swath_starts[i + 1].y - swath_ends[i].y;
+    const double cost = std::hypot(dx, dy);
+
+    json << ",\n";
+    json << "    {\"type\": \"Feature\", \"geometry\": {\"type\": \"MultiLineString\", "
+         << "\"coordinates\": [[["
+         << swath_ends[i].x << ", " << swath_ends[i].y << "], ["
+         << swath_starts[i + 1].x << ", " << swath_starts[i + 1].y
+         << "]]]}, \"properties\": {"
+         << "\"id\": " << edge_id++
+         << ", \"startid\": " << start_id
+         << ", \"endid\": " << end_id
+         << ", \"cost\": " << cost
+         << ", \"speed_limit\": " << transit_speed
+         << ", \"operation\": \"blade_off\""
+         << "}}";
+  }
+
+  json << "\n  ]\n";
+  json << "}\n";
+
+  const std::string geojson = json.str();
+
+  // Write to file.
+  {
+    std::ofstream ofs(route_graph_filepath_);
+    if (ofs.is_open()) {
+      ofs << geojson;
+      ofs.close();
+      RCLCPP_INFO(get_logger(),
+        "Route graph: %zu nodes, %zu edges (%zu swaths + %zu turns) -> %s",
+        n_nodes, n_edges, n_swaths, n_swaths > 0 ? n_swaths - 1 : size_t(0),
+        route_graph_filepath_.c_str());
+    } else {
+      RCLCPP_WARN(get_logger(),
+        "Failed to write route graph to %s", route_graph_filepath_.c_str());
+    }
+  }
+
+  // Publish on topic.
+  auto msg = std_msgs::msg::String();
+  msg.data = geojson;
+  route_graph_pub_->publish(msg);
 }
 
 // ---------------------------------------------------------------------------
