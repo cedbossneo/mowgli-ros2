@@ -13,6 +13,7 @@
  *   ~/power        mowgli_interfaces/msg/Power
  *   ~/imu/data_raw sensor_msgs/msg/Imu
  *   ~/wheel_odom   nav_msgs/msg/Odometry
+ *   /battery_state sensor_msgs/msg/BatteryState  (for opennav_docking)
  *
  * Subscribed topics:
  *   ~/cmd_vel      geometry_msgs/msg/Twist  → LlCmdVel packet to STM32
@@ -50,6 +51,7 @@
 #include "mowgli_interfaces/srv/mower_control.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "std_msgs/msg/header.hpp"
 
@@ -108,7 +110,9 @@ private:
     pub_power_ = create_publisher<mowgli_interfaces::msg::Power>("~/power", 10);
     pub_imu_ = create_publisher<sensor_msgs::msg::Imu>("~/imu/data_raw", 10);
     pub_wheel_odom_ = create_publisher<nav_msgs::msg::Odometry>("~/wheel_odom", 10);
-    pub_dock_pose_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("/dock_pose_fix", 10);
+    pub_battery_state_ = create_publisher<sensor_msgs::msg::BatteryState>("/battery_state", 10);
+    // dock_pose_fix publisher removed — ekf_map doesn't publish TF and nothing
+    // reads /odometry/filtered_map. Re-add if ekf_map becomes TF publisher.
   }
 
   void create_subscribers()
@@ -340,30 +344,12 @@ private:
       pub_status_->publish(msg);
     }
 
-    // ---- Dock pose fix (when charging, anchor position + orientation) ----
-    // When on the dock, we know the exact position. This prevents
-    // position drift from GPS noise and gives the EKF a heading reference.
-    // dock at (0,0) is valid — it means the datum IS the dock.
-    if (is_charging_)
-    {
-      auto pose_msg = geometry_msgs::msg::PoseWithCovarianceStamped{};
-      pose_msg.header.stamp = stamp;
-      pose_msg.header.frame_id = "map";
-      pose_msg.pose.pose.position.x = dock_x_;
-      pose_msg.pose.pose.position.y = dock_y_;
-      pose_msg.pose.pose.orientation.z = std::sin(dock_yaw_ / 2.0);
-      pose_msg.pose.pose.orientation.w = std::cos(dock_yaw_ / 2.0);
-      // Extremely tight covariance — must dominate GPS completely
-      pose_msg.pose.covariance[0] = 1e-8;    // x
-      pose_msg.pose.covariance[7] = 1e-8;    // y
-      pose_msg.pose.covariance[14] = 1e6;    // z
-      pose_msg.pose.covariance[21] = 1e6;    // roll
-      pose_msg.pose.covariance[28] = 1e6;    // pitch
-      // Yaw: tight only if user configured a specific dock_pose_yaw,
-      // loose otherwise (heading from SLAM + GPS after undock)
-      pose_msg.pose.covariance[35] = (dock_yaw_ != 0.0) ? 1e-4 : 1e6;
-      pub_dock_pose_->publish(pose_msg);
-    }
+    // ---- Dock pose fix ----
+    // Previously published dock position+heading to ekf_map while charging.
+    // Removed: ekf_map has publish_tf=false and nothing reads its output.
+    // SLAM is the sole TF authority. dock_pose_yaw is only used for SLAM
+    // map_start_pose (on saved maps) and by the BT for heading reference.
+    // If ekf_map is re-enabled as TF publisher in the future, re-add this.
 
     // ---- Emergency message ----
     {
@@ -400,6 +386,21 @@ private:
       msg.charger_enabled = (pkt.status_bitmask & STATUS_BIT_CHARGING) != 0u;
       msg.charger_status = msg.charger_enabled ? "charging" : "idle";
       pub_power_->publish(msg);
+    }
+
+    // ---- BatteryState message (for opennav_docking charge detection) ----
+    {
+      auto msg = sensor_msgs::msg::BatteryState{};
+      msg.header.stamp = stamp;
+      msg.header.frame_id = "base_link";
+      msg.voltage = pkt.v_system;
+      msg.current = pkt.charging_current;
+      msg.percentage = static_cast<float>(pkt.batt_percentage) / 100.0f;
+      msg.power_supply_status = is_charging_
+          ? sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_CHARGING
+          : sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_DISCHARGING;
+      msg.present = true;
+      pub_battery_state_->publish(msg);
     }
   }
 
@@ -705,7 +706,7 @@ private:
   rclcpp::Publisher<mowgli_interfaces::msg::Power>::SharedPtr pub_power_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr pub_imu_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_wheel_odom_;
-  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pub_dock_pose_;
+  rclcpp::Publisher<sensor_msgs::msg::BatteryState>::SharedPtr pub_battery_state_;
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_;
   rclcpp::Subscription<mowgli_interfaces::msg::HighLevelStatus>::SharedPtr sub_hl_status_;

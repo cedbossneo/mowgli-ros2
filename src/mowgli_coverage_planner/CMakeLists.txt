@@ -23,6 +23,7 @@ find_package(rclcpp_action REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(mowgli_interfaces REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(Fields2Cover REQUIRED)
@@ -52,6 +53,7 @@ ament_target_dependencies(mowgli_coverage_planner_lib
   nav_msgs
   geometry_msgs
   mowgli_interfaces
+  std_msgs
   tf2
   tf2_geometry_msgs
 )
@@ -88,6 +90,7 @@ ament_target_dependencies(coverage_planner_node
   nav_msgs
   geometry_msgs
   mowgli_interfaces
+  std_msgs
   tf2
   tf2_geometry_msgs
 )

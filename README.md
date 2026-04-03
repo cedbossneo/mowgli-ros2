@@ -1,634 +1,838 @@
 # Mowgli ROS2
 
-A complete rewrite of the [OpenMower](https://github.com/ClemensElflein/open_mower_ros) autonomous lawn mower in ROS2 Jazzy, featuring modern navigation, SLAM-based mapping, behavior tree control, and advanced coverage path planning.
+A complete ROS2 Jazzy robot mower stack built from scratch. Autonomous coverage mowing with RTK GPS, LiDAR SLAM, Fields2Cover v2 path planning, and a BehaviorTree.CPP v4 mission executor. Targets ARM boards (Rockchip) deployed in Docker containers.
 
-## Overview
+Originally inspired by the [OpenMower](https://github.com/ClemensElflein/open_mower_ros) project but rewritten from the ground up for ROS2 Jazzy with Nav2, slam_toolbox lifelong mode, and direct Fields2Cover v2 integration.
 
-Mowgli ROS2 is a professional-grade autonomous lawn mower platform built on the Robot Operating System 2 (ROS2). It combines proven robotics technologies—LiDAR-based simultaneous localization and mapping (SLAM), RTK-GPS fusion, dynamic obstacle avoidance, and reactive behavior trees—to deliver intelligent yard coverage.
-
-The system maintains the proven hardware platform (Raspberry Pi 4, STM32 firmware board, LiDAR, RTK-GPS) while completely reimplementing the software stack for modularity, extensibility, and modern practices.
-
-## Features
-
-- **LiDAR SLAM** - Real-time mapping and localization using SLAM Toolbox with outdoor optimization
-- **RTK-GPS Fusion** - Dual Extended Kalman Filter (EKF) architecture combining wheel odometry, IMU, and RTK-GPS for accurate outdoor positioning
-- **Nav2 Integration** - Industrial-grade navigation stack with dynamic costmaps and path planning
-- **Coverage Path Planning** - Fields2Cover v2 integration for optimal boustrophedon patterns with configurable swath angles and Dubins turn optimization
-- **Dual Controller Architecture** - RPP (Regulated Pure Pursuit) for both transit and coverage, with FTC plugin available for future integration
-- **Behavior Trees** - Reactive, composable control logic using BehaviorTree.CPP v4 with path-indexed state machine for coverage execution
-- **COBS Serial Protocol** - Robust binary communication with STM32 firmware (Consistent Overhead Byte Stuffing with CRC-16 error detection)
-- **Hardware Bridge** - Single USB serial interface abstracting all firmware interactions
-- **Foxglove Integration** - Real-time visualization via Foxglove Studio (ws://localhost:8765)
-- **Modular Architecture** - 12 focused packages with clear responsibilities and minimal coupling
-
-## System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Navigation & Behavior Layer                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌─────────────────────┐   │
-│  │  Nav2 Stack  │  │  Behavior    │  │  Localization       │   │
-│  │ (SmacPlanner │  │  Tree (BT.   │  │  Monitor            │   │
-│  │  RPP + FTC ) │  │  CPP)        │  │  & GPS Fusion       │   │
-│  └──────────────┘  └──────────────┘  └─────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-           │                  │                    │
-           └──────────────────┴────────────────────┘
-                      │
-┌─────────────────────────────────────────────────────────────────┐
-│              Hardware Bridge & Serial Protocol                   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  COBS Framing + CRC16  ←→  ROS2 Topics & Services     │   │
-│  │  /cmd_vel ←→ LlCmdVel  /status ← LlStatus              │   │
-│  └─────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                      │
-                  [USB Serial]
-                      │
-┌─────────────────────────────────────────────────────────────────┐
-│               STM32 Firmware (Mowgli Board)                      │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌──────────┐ │
-│  │   Motors   │  │   IMU      │  │  Sensors   │  │  Power   │ │
-│  │  (ESC)     │  │            │  │            │  │  Mgmt    │ │
-│  └────────────┘  └────────────┘  └────────────┘  └──────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Package Dependencies
-
-```
-mowgli_interfaces (messages, services, actions)
-    ↓
-mowgli_hardware (COBS bridge to STM32)
-    ↓
-mowgli_description (URDF/xacro robot model)
-mowgli_localization (odometry, GPS fusion, monitoring)
-mowgli_map (map server, boundary/zone management)
-mowgli_bringup (Nav2 config, launch files)
-mowgli_nav2_plugins (RPP & FTC controller plugins)
-mowgli_coverage_planner (Fields2Cover v2 coverage path planning)
-opennav_coverage (third-party Nav2 coverage server, built from source)
-mowgli_behavior (BehaviorTree nodes & main control)
-mowgli_monitoring (diagnostics, health monitoring, MQTT bridge)
-mowgli_simulation (Gazebo Harmonic simulation assets)
-    ↓
-Application / Remote Control / Foxglove Studio
-```
-
-## Hardware Requirements
-
-### Computing Platform
-- **Raspberry Pi 4** (4GB+ recommended) running Ubuntu 24.04 + ROS2 Jazzy
-
-### Mower Hardware
-- **STM32-based Mowgli board** with USB CDC serial interface
-- **Two independent drive motors** (rear-wheel differential drive)
-- **Blade motor** (optional, controllable)
-- **Encoder feedback** on both drive wheels
-- **Inertial Measurement Unit (IMU)** (9-DOF or 6-DOF)
-
-### Sensors
-- **LiDAR** (e.g., RpLiDAR A1, Livox Mid-360) publishing `/scan` at 5–20 Hz
-- **RTK-GPS receiver** (e.g., u-blox F9P) with fix status
-- **Power sensing** (voltage, current monitoring on battery)
-
-### Electrical
-- **12–24V lithium battery** with voltage monitoring
-- **USB-to-serial adapter** or direct USB CDC from STM32 to Raspberry Pi
-
-## Quick Start
-
-### 1. Building from Source
-
-#### Prerequisites
-- **ROS2 Jazzy** installed on Ubuntu 24.04
-- **colcon** build tool (`sudo apt install python3-colcon-common-extensions`)
-- Standard build tools: `gcc`, `cmake`, `git`
-
-#### Clone and Build
-```bash
-cd ~/ros2_ws/src
-git clone https://github.com/ClemensElflein/mowgli-ros2.git mowgli
-cd ~/ros2_ws
-colcon build --symlink-install
-source install/setup.bash
-```
-
-### 2. Launching Hardware (Real Robot)
-
-Connect the Mowgli board via USB and identify the port:
-```bash
-ls /dev/ttyUSB*    # or /dev/ttyACM* for native CDC
-```
-
-Launch the full stack:
-```bash
-ros2 launch mowgli_bringup mowgli.launch.py serial_port:=/dev/mowgli
-```
-
-This brings up:
-- Robot state publisher (URDF → static transforms)
-- Hardware bridge (USB-serial COBS communication)
-- Twist multiplexer (priority-based command routing)
-
-For the full navigation stack (localization, Nav2, behavior tree, coverage planner), use:
-```bash
-ros2 launch mowgli_bringup full_system.launch.py serial_port:=/dev/mowgli
-```
-
-### 3. Launching Simulation (Gazebo Harmonic)
-
-#### Option A: GUI Simulation with noVNC
-
-```bash
-docker compose up simulation-gui
-```
-
-Visit http://localhost:6080/vnc.html to view the Gazebo GUI. Foxglove Studio is available at ws://localhost:8765.
-
-#### Option B: Development Simulation
-
-```bash
-docker compose up dev-sim
-```
-
-The simulation launches `sim_full_system.launch.py` which includes Gazebo Harmonic, the full Nav2 stack, and sensor bridging. For hardware, use `full_system.launch.py` instead.
-
-This spawns a virtual Mowgli in a Gazebo Harmonic world with:
-- Simulated sensors (LiDAR, IMU, wheel odometry)
-- Physics-based motor and blade control
-- ROS2 ↔ Gazebo bridging for sensor data and commands
-- Foxglove Bridge for real-time visualization
-
-### 4. Docker Development Workflow
-
-The Makefile provides convenient development targets:
-
-```bash
-# Build Docker image for simulation
-make docker-sim
-
-# Run simulation with GUI (noVNC at http://localhost:6080/vnc.html)
-make run-sim-gui
-
-# Development shell with all build dependencies
-make dev-shell
-
-# Build individual package in dev container
-make dev-build-pkg PACKAGE=mowgli_behavior
-
-# Rebuild entire workspace in dev container
-make dev-build
-
-# Restart dev container
-make dev-restart
-
-# Full development simulation (no GUI, ROS2 commands available)
-make dev-sim
-```
-
-Or use docker-compose directly:
-```bash
-docker compose build
-docker compose up simulation    # Headless simulation testing
-docker compose up dev-sim       # Development simulation with bind-mounts
-# or
-docker compose up mowgli        # For real robot (mounts /dev/mowgli)
-```
-
-## Package Descriptions
-
-### mowgli_interfaces
-**Message, service, and action definitions** for the entire system.
-
-Key types:
-- `mowgli_interfaces::msg::Status` – Mower mode, charging, rain, sound/UI module availability
-- `mowgli_interfaces::msg::Emergency` – Stop button, lift detection, emergency latching
-- `mowgli_interfaces::msg::Power` – Battery voltage, charging current, charger status
-- `mowgli_interfaces::srv::MowerControl` – Enable/disable cutting blade and mower
-- `mowgli_interfaces::srv::EmergencyStop` – Trigger or release emergency stop
-- Standard ROS2 types: `sensor_msgs/Imu`, `geometry_msgs/Twist`, `nav_msgs/Odometry`, etc.
-
-### mowgli_hardware
-**Serial bridge between STM32 firmware and ROS2** using the COBS protocol.
-
-**Topics Published:**
-- `~/status` (Status) – Mower state, hardware availability
-- `~/emergency` (Emergency) – Emergency stop status and reason
-- `~/power` (Power) – Battery voltage, charge current
-- `~/imu/data_raw` (sensor_msgs/Imu) – Raw accelerometer and gyroscope data
-
-**Topics Subscribed:**
-- `~/cmd_vel` (geometry_msgs/Twist) – Motor velocity commands from the navigation stack
-
-**Services Offered:**
-- `~/mower_control` – Enable/disable cutting or mower drive
-- `~/emergency_stop` – Assert or release emergency stop
-
-**Protocol:**
-- COBS-framed binary packets with CRC-16 error detection
-- 115200 baud USB serial (configurable)
-- Automatic reconnection on serial port errors
-- Heartbeat every 250 ms to maintain watchdog on firmware
-
-### mowgli_localization
-**Four-node localization pipeline** producing accurate, multi-modal pose estimates.
-
-**Nodes:**
-
-1. **wheel_odometry_node**
-   - Differentially integrates left/right wheel encoder ticks
-   - Outputs `/wheel_odom` odometry at 50 Hz
-   - Used as base motion model in the EKF
-
-2. **gps_pose_converter_node**
-   - Converts RTK-GPS fix to local ENU coordinate system
-   - Scales covariance based on GPS quality indicators
-   - Publishes `/gps/pose` as PoseWithCovarianceStamped
-
-3. **navsat_to_absolute_pose_node**
-   - Converts GPS fix to absolute pose in the map frame
-   - Publishes `/gps/absolute_pose` as `mowgli_interfaces/msg/AbsolutePose`
-   - Includes RTK fix quality flags for downstream consumers (GUI, behavior tree)
-
-4. **localization_monitor_node**
-   - Monitors EKF filter health and variance
-   - Detects 5 degradation modes: stale odometry, GPS timeout, filter divergence, etc.
-   - Publishes degradation warnings for behavior tree adaptation
-
-**Dual EKF Architecture:**
-- `ekf_odom` (50 Hz) – Fuses wheel odometry + IMU → `odom` frame
-- `ekf_map` (20 Hz) – Fuses filtered odometry + GPS → `map` frame
-
-### mowgli_bringup
-**Configuration, URDFs, and launch infrastructure** for the entire stack.
-
-**Files:**
-- `urdf/mowgli.urdf.xacro` – Robot description with differential drive kinematics
-- `config/hardware_bridge.yaml` – Serial port and communication rates
-- `config/localization.yaml` – Dual EKF tuning for outdoor operation
-- `config/nav2_params.yaml` – Nav2 costmaps, planners, and controller parameters
-- `config/slam_toolbox.yaml` – Outdoor SLAM tuning (loop closure, map update rates)
-- `config/twist_mux.yaml` – Priority multiplexing of navigation, teleoperation, and emergency commands
-- `launch/mowgli.launch.py` – Hardware-layer bringup (robot_state_publisher, hardware_bridge, twist_mux)
-- `launch/full_system.launch.py` – Full navigation stack (includes mowgli.launch.py + Nav2, localization, BT, coverage)
-- `launch/sim_full_system.launch.py` – Gazebo Harmonic simulation with full nav stack
-
-### mowgli_nav2_plugins
-**Custom Nav2 controller plugins** for navigation and coverage path following.
-
-**RPPController (Regulated Pure Pursuit):**
-- Used for transit to waypoints and docking navigation
-- Wrapped in RotationShimController for initial heading alignment
-- Smooth, stable control for general-purpose navigation
-- Integrates with standard Nav2 goalchecker framework
-
-**FTCController (Follow-The-Carrot):**
-- Specialized for coverage path execution with path-indexed state machine
-- **5-State FSM:** Pre-Rotate → Forward → Approach → Stop → Oscillation Recovery
-- **3-Channel PID:** Independent control of linear velocity, angular velocity, and acceleration
-- **Path Interpolation:** SLERP-based carrot point following for smooth curves
-- **Collision Detection:** Dynamic costmap-based obstacle checking
-- **Oscillation Detection:** Reactive recovery when the robot becomes trapped
-- **Tuned for Lawn Mowing:** Handles the unique dynamics of slow, heavy outdoor vehicles
-
-**Custom Navigate-To-Pose Behavior Tree XML:**
-- `navigate_to_pose.xml` with GoalCheckerSelector for multiple goal validation strategies
-- Seamless switching between RPP (transit) and FTC (coverage) controllers
-
-### mowgli_coverage_planner
-**Fields2Cover v2 integration for optimal coverage path planning**.
-
-**Service Provided:**
-- `~/plan_coverage` (PlanCoverage action) – Accepts boundary polygon, zone inclusion/exclusion, desired swath width, and returns coverage waypoint path
-
-**Features:**
-- **Boustrophedon (parallel line) pattern generation** – Optimal lawn coverage with configurable swath angles
-- **Dubins turn optimization** – Smooth curved transitions between mowing lines minimizing non-productive movement
-- **Zone-based planning** – Supports inclusion/exclusion zones for obstacles and areas of interest
-- **Real-time planning** – Generates optimal path in seconds even for large properties
-- **Swath angle optimization** – Automatically or manually sets the best mowing direction for field shape
-
-**Typical Usage (from behavior tree):**
-```cpp
-PlanCoveragePath(boundary, zone_config) → waypoint_list
-```
-
-### mowgli_map
-**Map server, area management, and obstacle tracking** for coverage planning context.
-
-**Nodes:**
-
-1. **map_server_node**
-   - Area CRUD via ROS2 services: `AddMowingArea`, `SetDockingPoint`, `ClearMap`, `GetMowingArea`
-   - 4-layer GridMap: occupancy, mow_progress, keepout, speed
-   - Auto-saves/loads mowing areas and docking point to disk (`/ros2_ws/maps/areas.dat`)
-   - Publishes `~/mow_progress` OccupancyGrid for coverage tracking
-
-2. **obstacle_tracker_node**
-   - Persistent LiDAR obstacle detection subscribing to `/scan`
-   - Promotes transient detections to PERSISTENT after age/observation thresholds
-   - Publishes `ObstacleArray` for costmap integration and coverage replanning
-
-### mowgli_monitoring
-**System health monitoring, diagnostics, and MQTT integration**.
-
-**Nodes:**
-1. **diagnostics_node**
-   - Monitors EKF health, battery voltage trends, motor encoder faults
-   - Publishes diagnostic_msgs/DiagnosticArray to aggregator
-   - Detects 5 degradation modes: stale odometry, GPS timeout, filter divergence, motor stall, battery fault
-
-2. **mqtt_bridge_node**
-   - Forwards selected topics to MQTT broker for remote monitoring
-   - Publishes: battery voltage, charging status, mowing progress, error codes
-   - Subscribes to remote control commands if needed
-
-**Published Topics:**
-- `~/diagnostics` (diagnostic_msgs/DiagnosticArray) – System health status
-- (MQTT) Battery voltage, mower mode, GPS quality, error codes
-
-### mowgli_behavior
-**High-level control logic** using BehaviorTree.CPP v4 with reactive patterns and coverage integration.
-
-**Tree Structure:**
-```
-ReactiveSequence (Root)
-├── EmergencyGuard (Fallback)
-│   ├── Inverter → IsEmergency
-│   └── EmergencyHandler (stop, publish status)
-└── MainLogic (Fallback)
-    ├── DockingSequence (battery critical → navigate to dock)
-    ├── MowingSequence (START command)
-    │   ├── PlanCoveragePath (Fields2Cover)
-    │   ├── NavigateToPose to first waypoint (RPP)
-    │   ├── FollowCoveragePath (FTC controller, path-indexed SM)
-    │   ├── Recovery with retry (3 attempts)
-    │   └── Navigate to dock on completion
-    ├── HomeSequence (HOME command)
-    ├── RecordingSequence (S1 command)
-    └── IdleSequence (default)
-```
-
-**Condition Nodes:**
-- `IsEmergency` – Checks emergency latch state
-- `IsBatteryLow` – Checks power messages for low voltage
-- `IsGpsAvailable` – Checks GPS quality from monitor node
-- `IsLocalizationHealthy` – Checks EKF variance from monitor node
-
-**Action Nodes:**
-- `PlanCoveragePath` – Calls mowgli_coverage_planner service with Fields2Cover
-- `NavigateToPose` – Sends goal to Nav2 action server (uses RPP by default)
-- `FollowCoveragePath` – Executes coverage waypoints using FTC controller
-- `SetMowerEnabled` – Calls mower_control service
-- `RecoveryHandler` – Attempts goal re-planning with backoff strategy
-- `UpdateHighLevelState` – Sends current mode to firmware
-
-All nodes are registered in `register_nodes.cpp` for dynamic loading from XML.
-
-### mowgli_simulation
-**Gazebo Harmonic simulation assets and physics models** for testing without hardware.
-
-**Contents:**
-- `models/mowgli_mower/model.sdf` – Complete mower SDF with Gazebo physics, contact sensors, and joint actuators
-- `worlds/garden.sdf` – Example lawn simulation environment with grass, obstacles, charging dock
-- `launch/spawn_mowgli.launch.py` – Spawns the mower in Gazebo with sensor bridging
-- Sensor simulation: LiDAR point cloud, IMU (noise and gravity), wheel encoder odometry
-- Motor simulation: Direct velocity control → motor commands via Gazebo plugins
-
-**Docker Usage:**
-```bash
-docker compose up simulation    # Headless Gazebo with ROS2 bridge
-```
-
-**GUI Access:**
-- noVNC: http://localhost:6080/vnc.html (Gazebo visualizer)
-- Foxglove: ws://localhost:8765 (real-time telemetry)
-
-## Configuration Guide
-
-### Serial Communication
-
-**File:** `src/mowgli_bringup/config/hardware_bridge.yaml`
-
-```yaml
-hardware_bridge:
-  ros__parameters:
-    serial_port: "/dev/mowgli"      # Change to match your connection
-    baud_rate: 115200                 # Must match firmware
-    heartbeat_rate: 4.0                # Hz – keep-alive to firmware
-    publish_rate: 100.0                # Hz – sensor polling frequency
-    high_level_rate: 2.0               # Hz – mode/GPS quality updates
-```
-
-### Localization Tuning
-
-**File:** `src/mowgli_bringup/config/localization.yaml`
-
-The dual EKF uses two pipelines:
-1. **odom EKF** – Local fusion of wheel odometry + IMU (high frequency, low latency)
-2. **map EKF** – Global fusion of filtered odometry + GPS (slower, lower variance)
-
-Key parameters:
-- `frequency` – EKF update rate (Hz). Higher for faster response, lower for smoother estimates.
-- `process_noise_covariance` – Trust in the motion model. Increase if odometry drifts; decrease if GPS variance is high.
-- `odom0_config`, `pose0_config` – Which state dimensions to fuse from each sensor.
-
-### Nav2 Parameters
-
-**File:** `src/mowgli_bringup/config/nav2_params.yaml`
-
-**Controller Server:**
-```yaml
-controller_server:
-  ros__parameters:
-    controller_frequency: 10.0         # Hz – how fast to compute motor commands
-    FollowPath:
-      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.3           # m/s – target speed for lawn mowing
-      lookahead_dist: 0.6               # m – carrot distance ahead of robot
-```
-
-**Planner Server:**
-```yaml
-planner_server:
-  ros__parameters:
-    planner_plugins: ["GridBased"]
-    GridBased:
-      plugin: "nav2_smac_planner::SmacPlanner2D"
-      maximum_iterations: 1000
-      angle_quantization_bins: 72      # 5° resolution
-```
-
-### SLAM Tuning
-
-**File:** `src/mowgli_bringup/config/slam_toolbox.yaml`
-
-For outdoor operation with changing grass height and seasonal variation:
-```yaml
-slam_toolbox:
-  ros__parameters:
-    map_start_at_origin: false
-    map_frame: map
-    base_frame: base_link
-    odom_frame: odom
-
-    # Outdoor tuning
-    maximum_laser_range: 25.0          # m – beyond this, ignore returns
-    minimum_scan_angle: -3.14
-    maximum_scan_angle: 3.14
-
-    # Loop closure (conservative for outdoor)
-    enable_loop_closure: true
-    loop_search_maximum_distance: 3.0  # m – only close loops < 3m
-    loop_match_minimum_chain_size: 10
-```
-
-### Twist Multiplexer
-
-**File:** `src/mowgli_bringup/config/twist_mux.yaml`
-
-Priority-based velocity command routing:
-
-```yaml
-twist_mux:
-  ros__parameters:
-    topics:
-      navigation:                       # Lowest priority (10)
-        topic: /cmd_vel_nav
-        priority: 10
-        timeout: 0.5                    # Seconds
-
-      teleop:                           # Higher priority (20)
-        topic: /cmd_vel_teleop
-        priority: 20
-        timeout: 0.5
-
-      emergency:                        # Highest velocity source (100)
-        topic: /cmd_vel_emergency
-        priority: 100
-        timeout: 0.2
-```
-
-### FTCController Parameters
-
-> **Note:** The FTC plugin is available but not currently active. RPP (RegulatedPurePursuit) is used for both transit and coverage paths. The FTC configuration below is provided for future integration.
-
-**File:** `src/mowgli_bringup/config/nav2_params.yaml` (controller section)
-
-```yaml
-FollowPath:
-  plugin: "mowgli_nav2_plugins::FTCController"
-
-  # Motion control
-  desired_linear_vel: 0.3              # m/s target speed
-  lookahead_dist: 0.6                  # m carrot distance
-  lookahead_max_angle: 0.5             # rad max carrot angle deviation
-
-  # PID gains (linear velocity)
-  linear_p_gain: 2.0
-  linear_i_gain: 0.5
-  linear_d_gain: 0.1
-  linear_max_integral: 0.5
-
-  # PID gains (angular velocity)
-  angular_p_gain: 2.0
-  angular_i_gain: 0.5
-  angular_d_gain: 0.1
-  angular_max_integral: 0.5
-
-  # Safety
-  max_linear_vel: 0.5                  # m/s absolute max
-  max_angular_vel: 1.0                 # rad/s absolute max
-
-  # Oscillation recovery
-  use_oscillation_recovery: true
-  oscillation_recovery_min_duration: 5.0  # seconds before recovery kicks in
-```
-
-## Building and Testing
-
-### Build the Project
-```bash
-colcon build --symlink-install
-source install/setup.bash
-```
-
-### Run Unit Tests
-```bash
-colcon test --ctest-args -VV
-```
-
-All packages include unit tests for COBS serialization, wheel odometry, oscillation detection, and the FTC controller state machine.
-
-### Visualize in RViz2
-```bash
-rviz2 -d src/mowgli_bringup/config/mowgli.rviz
-```
-
-Monitor:
-- `/map` – SLAM output
-- `/scan` – LiDAR data
-- `/tf_tree` – Transform tree
-- `/cmd_vel` – Motor commands
-- `/odometry/filtered_map` – Fused pose estimate
-
-## Development Workflow
-
-### Adding a New Behavior Tree Node
-
-1. **Define the node in** `src/mowgli_behavior/include/mowgli_behavior/[condition|action]_nodes.hpp`
-2. **Implement in** `src/mowgli_behavior/src/[condition|action]_nodes.cpp`
-3. **Register in** `src/mowgli_behavior/src/register_nodes.cpp` using `BT_REGISTER_NODES`
-4. **Reference in tree XML** (e.g., `mowgli_behavior.xml`)
-5. **Add unit tests** in `src/mowgli_behavior/test/`
-
-### Adding a New ROS2 Node
-
-1. Create source files in the appropriate package
-2. Add a `Node` entry in `CMakeLists.txt` and link dependencies
-3. Add launch file entry (or include in existing launch)
-4. Test with: `ros2 launch mowgli_bringup [launch_file].py`
-
-### Debugging Serial Communication
-
-Enable debug logging:
-```bash
-ros2 launch mowgli_bringup mowgli.launch.py --log-level mowgli_hardware:=DEBUG
-```
-
-Monitor raw serial traffic:
-```bash
-timeout 10 cat /dev/mowgli | xxd    # Raw bytes
-```
-
-## Contributing
-
-We welcome contributions! Please:
-
-1. **Follow the coding style** – See `~/.claude/rules/` for linting and formatting standards
-2. **Write tests** – Minimum 80% code coverage for new features
-3. **Document changes** – Update relevant README sections and inline code comments
-4. **Submit a PR** – Include a clear description of the change and testing performed
-
-## License
-
-Mowgli ROS2 is licensed under the **GNU General Public License v3.0** (GPL-3.0), maintaining compatibility with OpenMower. See `LICENSE` file for details.
-
-## Credits
-
-- **Clemens Elflein** – Original OpenMower design and firmware architecture
-- **Cedric** – ROS2 rewrite, Mowgli firmware, and OpenMower GUI
-- **ROS2 Community** – Nav2, SLAM Toolbox, BehaviorTree.CPP, and ecosystem
-- **Contributors** – All those who have tested and improved the system
-
-## Support
-
-For questions and issues:
-- **GitHub Issues** – Report bugs and feature requests
-- **ROS2 Discourse** – General ROS2 questions and help
-- **Mowgli Documentation** – Full guides in `docs/` directory
+[![CI](https://github.com/cedbossneo/mowgli-ros2/actions/workflows/ci.yml/badge.svg)](https://github.com/cedbossneo/mowgli-ros2/actions/workflows/ci.yml)
+[![Docker](https://github.com/cedbossneo/mowgli-ros2/actions/workflows/docker.yml/badge.svg)](https://github.com/cedbossneo/mowgli-ros2/actions/workflows/docker.yml)
 
 ---
 
-**Happy mowing!** 🚜
+## Table of Contents
+
+1. [Architecture Overview](#architecture-overview)
+2. [Features](#features)
+3. [Packages](#packages)
+4. [TF Tree](#tf-tree)
+5. [Key Topics and Services](#key-topics-and-services)
+6. [Configuration](#configuration)
+7. [Building](#building)
+8. [Docker Deployment](#docker-deployment)
+9. [Launch Files](#launch-files)
+10. [Behavior Tree](#behavior-tree)
+11. [Simulation](#simulation)
+12. [GUI Integration](#gui-integration)
+13. [Hardware Protocol](#hardware-protocol)
+14. [Contributing](#contributing)
+15. [License](#license)
+
+---
+
+## Architecture Overview
+
+```
+ +---------------------------------------------------------------------+
+ |                         openmower-gui                               |
+ |           Go backend (rosbridge :9090) + React frontend             |
+ +----------------------------+----------------------------------------+
+                              | rosbridge WS / Foxglove WS (:8765)
+ +----------------------------v----------------------------------------+
+ |                     behavior_tree_node                              |
+ |  BehaviorTree.CPP v4   main_tree.xml                                |
+ |  Guards: Emergency -> Boundary -> GPS mode -> MainLogic             |
+ |  Actions: Undock -> Plan -> Mow -> Dock  (+ rain/battery resume)    |
+ +------+------------------+-------------------+-----------------------+
+        |                  |                   |
+ +------v------+  +--------v--------+   +------v---------------------+
+ |  map_server |  |coverage_planner |   |          Nav2 Jazzy         |
+ |  GridMap    |  | Fields2Cover v2 |   |  FollowPath (RPP+Rotation)  |
+ |  keepout/   |  | Boustrophedon   |   |  FollowCoveragePath (RPP)   |
+ |  speed masks|  | Dubins curves   |   |  SmacPlanner2D              |
+ |  mow_progres|  | GeoJSON output  |   |  collision_monitor          |
+ |  area CRUD  |  +-----------------+   |  docking_server             |
+ +------+------+                        +-----------------------------+
+        |
+ +------v--------------------------------------------------------------+
+ |                        Localization                                  |
+ |                                                                      |
+ |  slam_toolbox (lifelong)         ekf_odom (50 Hz)                   |
+ |  map -> odom TF authority        wheel_odom + IMU -> odom->base_link |
+ |                                                                      |
+ |  navsat_to_absolute_pose         ekf_map (20 Hz)                    |
+ |  NavSatFix -> AbsolutePose       filtered_odom + GPS + SLAM heading  |
+ |                                  -> /odometry/filtered_map           |
+ |                                  (TF from SLAM, not ekf_map)         |
+ +----------------------------------------------------------------------+
+        |
+ +------v--------------------------------------------------------------+
+ |                     hardware_bridge_node                             |
+ |  COBS + CRC-16 binary protocol over USB serial to STM32             |
+ |  Publishes: /imu/data  /wheel_odom  /hardware_bridge/status         |
+ |             /hardware_bridge/power  /hardware_bridge/emergency       |
+ |  Subscribes: /cmd_vel  (via twist_mux)                              |
+ +----------------------------------------------------------------------+
+        |
+ +------v--------------------------------------------------------------+
+ |          STM32 Firmware  (YardForce Classic 500 / OpenMower HW)     |
+ |  IMU  |  Wheel encoders  |  Blade ESC  |  E-stop  |  Rain sensor   |
+ +----------------------------------------------------------------------+
+```
+
+---
+
+## Features
+
+- **Full autonomous mowing** — plan, mow, dock, charge, resume. No manual intervention required.
+- **Fields2Cover v2** — boustrophedon swath generation with headland, Dubins-curve turns, cell decomposition for irregular polygons, and GeoJSON route graph output.
+- **slam_toolbox lifelong mode** — LiDAR SLAM that accumulates across sessions. Pose graph persisted to disk before docking and reloaded on next session.
+- **RTK GPS localization** — UBX protocol. RTK fixed gives ~2 cm absolute accuracy. `ekf_map` fuses GPS + SLAM heading + wheel velocity with adaptive covariances.
+- **Dual EKF** — `ekf_odom` for wheel+IMU dead reckoning at 50 Hz, `ekf_map` for GPS+SLAM fusion at 20 Hz. SLAM is the sole map→odom TF authority.
+- **BehaviorTree.CPP v4 mission executor** — reactive guards for emergency, boundary, rain, and battery. Automatic rain-stop-dock-wait-resume cycle. Battery-aware dock-charge-undock-resume cycle.
+- **Persistent obstacle tracking** — `obstacle_tracker_node` promotes LiDAR detections to persistent after age and observation thresholds. Coverage path replanned when the obstacle map changes.
+- **Nav2 Jazzy** — SmacPlanner2D global planner, RegulatedPurePursuit controllers, RotationShimController for transit, `docking_server` (opennav_docking), `collision_monitor`.
+- **FTCController Nav2 plugin** — Follow-the-Carrot controller ported from ROS1 for coverage path following (built, pending Nav2 param wiring).
+- **Mow progress tracking** — `map_server_node` GridMap layer marks cells as mowed with time-based decay. Visualised as OccupancyGrid.
+- **Keepout and speed zone masks** — `map_server_node` publishes Nav2 costmap filter masks for mowing boundaries and perimeter speed limits.
+- **Cyclone DDS middleware** — `rmw_cyclonedds_cpp` selected in the runtime Docker image for reliable service discovery on ARM without shared memory issues.
+- **Docker multi-stage build** — 6 stages from `ros:jazzy-ros-base`. ARM-tested on Rockchip. Dev workflow with bind-mounted source for fast iteration.
+- **Foxglove Studio bridge** — WebSocket on port 8765. Pre-built layout at `foxglove/mowgli_sim.json`.
+- **openmower-gui integration** — rosbridge WebSocket on port 9090.
+- **Diagnostics** — 8 monitored subsystems published as `diagnostic_msgs/DiagnosticArray`. Optional MQTT bridge.
+
+---
+
+## Packages
+
+| Package | Executables | Description |
+|---------|-------------|-------------|
+| `mowgli_interfaces` | — | All ROS2 msg/srv/action definitions: 12 messages, 9 services, 2 actions |
+| `mowgli_hardware` | `hardware_bridge_node` | COBS+CRC-16 serial bridge to STM32. Publishes sensor data, subscribes to `cmd_vel` |
+| `mowgli_bringup` | — | Launch files, Nav2/EKF/SLAM config, URDF/xacro, `twist_mux` config |
+| `mowgli_localization` | `wheel_odometry_node` `navsat_to_absolute_pose_node` `gps_pose_converter_node` `slam_heading_node` `localization_monitor_node` | Wheel odometry, GPS conversion pipeline, SLAM heading extractor, dual EKF, localization mode monitor |
+| `mowgli_behavior` | `behavior_tree_node` | BehaviorTree.CPP v4 executor. Loads `main_tree.xml`. All BT action and condition nodes |
+| `mowgli_map` | `map_server_node` `obstacle_tracker_node` | GridMap with 4 layers, area CRUD services, keepout/speed filter masks, mow progress. Persistent LiDAR obstacle detection |
+| `mowgli_coverage_planner` | `coverage_planner_node` | Fields2Cover v2 pipeline: headland then swaths then Dubins path. Exposes `PlanCoverage` action server |
+| `mowgli_nav2_plugins` | — | `FTCController` Nav2 controller plugin library loaded by `controller_server` |
+| `mowgli_monitoring` | `diagnostics_node` `mqtt_bridge_node` | Diagnostics aggregator monitoring 8 subsystems at 1 Hz. Optional MQTT bridge |
+| `mowgli_simulation` | `gps_degradation_sim_node` `navsat_to_pose_node` | Gazebo Harmonic worlds, SDF mower model, GPS degradation simulator |
+
+---
+
+## TF Tree
+
+```
+map
+ +-- odom              (published by slam_toolbox — map->odom TF authority)
+      +-- base_link    (published by ekf_odom at 50 Hz — odom->base_link)
+           +-- base_footprint         (fixed, on ground plane)
+           +-- left_wheel_link        (continuous joint)
+           +-- right_wheel_link       (continuous joint)
+           +-- front_left_caster_link (continuous joint)
+           +-- front_right_caster_link(continuous joint)
+           +-- blade_link             (continuous joint, under chassis)
+           +-- imu_link               (fixed — offset from mowgli_robot.yaml)
+           +-- gps_link               (fixed — offset from mowgli_robot.yaml)
+           +-- lidar_link             (fixed — offset from mowgli_robot.yaml)
+```
+
+Frame conventions follow REP-103: x forward, y left, z up.
+
+`base_link` is placed at the centre of the rear drive wheel axis at wheel axle height. The chassis geometric centre sits `chassis_center_x` (default 0.18 m) forward of `base_link`. `base_footprint` is directly below `base_link` on the ground plane. The Nav2 footprint polygon is computed at launch from `chassis_length`, `chassis_width`, and `chassis_center_x` read from `mowgli_robot.yaml`.
+
+`ekf_map` has `publish_tf: false`. Its state estimate is available on `/odometry/filtered_map` but the map→odom TF comes exclusively from slam_toolbox to avoid dual-broadcaster conflicts.
+
+---
+
+## Key Topics and Services
+
+### Published Topics
+
+| Topic | Type | Source | Rate |
+|-------|------|--------|------|
+| `/hardware_bridge/status` | `mowgli_interfaces/msg/Status` | `hardware_bridge_node` | ~10 Hz |
+| `/hardware_bridge/power` | `mowgli_interfaces/msg/Power` | `hardware_bridge_node` | ~1 Hz |
+| `/hardware_bridge/emergency` | `mowgli_interfaces/msg/Emergency` | `hardware_bridge_node` | ~1 Hz |
+| `/imu/data` | `sensor_msgs/msg/Imu` | `hardware_bridge_node` (remapped) | ~50 Hz |
+| `/wheel_odom` | `nav_msgs/msg/Odometry` | `wheel_odometry_node` | ~50 Hz |
+| `/gps/absolute_pose` | `mowgli_interfaces/msg/AbsolutePose` | `navsat_to_absolute_pose_node` | ~5 Hz |
+| `/gps/pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | `gps_pose_converter_node` | ~5 Hz |
+| `/slam/heading` | `geometry_msgs/msg/PoseWithCovarianceStamped` | `slam_heading_node` | ~20 Hz |
+| `/odometry/filtered_odom` | `nav_msgs/msg/Odometry` | `ekf_odom` | ~50 Hz |
+| `/odometry/filtered_map` | `nav_msgs/msg/Odometry` | `ekf_map` | ~20 Hz |
+| `/scan` | `sensor_msgs/msg/LaserScan` | LiDAR driver or Gazebo bridge | ~10 Hz |
+| `/behavior_tree_node/high_level_status` | `mowgli_interfaces/msg/HighLevelStatus` | `behavior_tree_node` | on BT tick |
+| `/coverage_planner_node/coverage_path` | `nav_msgs/msg/Path` | `coverage_planner_node` | transient-local on plan |
+| `/coverage_planner_node/coverage_outline` | `nav_msgs/msg/Path` | `coverage_planner_node` | transient-local on plan |
+| `/coverage_planner_node/route_graph` | `std_msgs/msg/String` | `coverage_planner_node` | on plan (GeoJSON) |
+| `/map_server_node/grid_map` | `grid_map_msgs/msg/GridMap` | `map_server_node` | configurable |
+| `/map_server_node/mow_progress` | `nav_msgs/msg/OccupancyGrid` | `map_server_node` | configurable |
+| `/map_server_node/docking_pose` | `geometry_msgs/msg/PoseStamped` | `map_server_node` | transient-local |
+| `/map_server_node/boundary_violation` | `std_msgs/msg/Bool` | `map_server_node` | on change |
+| `/map_server_node/replan_needed` | `std_msgs/msg/Bool` | `map_server_node` | on obstacle change |
+| `/obstacle_tracker/obstacles` | `mowgli_interfaces/msg/ObstacleArray` | `obstacle_tracker_node` | on change |
+| `/localization/mode` | `std_msgs/msg/String` | `localization_monitor_node` | 10 Hz |
+| `/localization/mode_id` | `std_msgs/msg/Int32` | `localization_monitor_node` | 10 Hz |
+| `/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | `diagnostics_node` | ~1 Hz |
+| `/battery_state` | `sensor_msgs/msg/BatteryState` | `hardware_bridge_node` | ~1 Hz |
+
+### Services
+
+| Service | Type | Server |
+|---------|------|--------|
+| `/hardware_bridge/mower_control` | `mowgli_interfaces/srv/MowerControl` | `hardware_bridge_node` |
+| `/hardware_bridge/emergency_stop` | `mowgli_interfaces/srv/EmergencyStop` | `hardware_bridge_node` |
+| `/behavior_tree_node/high_level_control` | `mowgli_interfaces/srv/HighLevelControl` | `behavior_tree_node` |
+| `/map_server_node/add_mowing_area` | `mowgli_interfaces/srv/AddMowingArea` | `map_server_node` |
+| `/map_server_node/get_mowing_area` | `mowgli_interfaces/srv/GetMowingArea` | `map_server_node` |
+| `/map_server_node/set_docking_point` | `mowgli_interfaces/srv/SetDockingPoint` | `map_server_node` |
+| `/map_server_node/save_map` | `std_srvs/srv/Trigger` | `map_server_node` |
+| `/map_server_node/clear_map` | `std_srvs/srv/Trigger` | `map_server_node` |
+| `/map_server_node/save_areas` | `std_srvs/srv/Trigger` | `map_server_node` |
+| `/map_server_node/load_areas` | `std_srvs/srv/Trigger` | `map_server_node` |
+| `/obstacle_tracker/save_obstacles` | `std_srvs/srv/Trigger` | `obstacle_tracker_node` |
+| `/slam_toolbox/serialize_map` | `slam_toolbox/srv/SerializePoseGraph` | `slam_toolbox` |
+
+### Actions
+
+| Action | Type | Server |
+|--------|------|--------|
+| `/coverage_planner_node/plan_coverage` | `mowgli_interfaces/action/PlanCoverage` | `coverage_planner_node` |
+| `/dock_robot` | `opennav_docking_msgs/action/DockRobot` | `docking_server` |
+| `/undock_robot` | `opennav_docking_msgs/action/UndockRobot` | `docking_server` |
+| `/navigate_to_pose` | `nav2_msgs/action/NavigateToPose` | Nav2 `bt_navigator` |
+| `/follow_path` | `nav2_msgs/action/FollowPath` | Nav2 `controller_server` |
+| `/backup` | `nav2_msgs/action/BackUp` | Nav2 behaviors |
+
+### Sending High-Level Commands
+
+```bash
+# Start mowing
+ros2 service call /behavior_tree_node/high_level_control \
+  mowgli_interfaces/srv/HighLevelControl "{command: 1}"
+
+# Return to dock
+ros2 service call /behavior_tree_node/high_level_control \
+  mowgli_interfaces/srv/HighLevelControl "{command: 2}"
+
+# Start area recording (COMMAND_S1)
+ros2 service call /behavior_tree_node/high_level_control \
+  mowgli_interfaces/srv/HighLevelControl "{command: 3}"
+```
+
+| Command | Constant | Effect |
+|---------|----------|--------|
+| `1` | `COMMAND_START` | Begin mowing sequence |
+| `2` | `COMMAND_HOME` | Navigate to dock and charge |
+| `3` | `COMMAND_S1` | Enter recording mode |
+
+### AbsolutePose GPS Flags
+
+| Flag | Value | Meaning |
+|------|-------|---------|
+| `FLAG_GPS_RTK` | `1` | GPS fix present (does not imply centimetre accuracy) |
+| `FLAG_GPS_RTK_FIXED` | `2` | RTK fixed — centimetre accuracy |
+| `FLAG_GPS_RTK_FLOAT` | `4` | RTK float — decimetre accuracy |
+| `FLAG_GPS_DEAD_RECKONING` | `8` | Dead reckoning fallback |
+
+### Localization Modes
+
+`localization_monitor_node` publishes the current mode on `/localization/mode` (string) and `/localization/mode_id` (int32):
+
+| mode_id | mode string | Condition | Typical accuracy |
+|---------|-------------|-----------|-----------------|
+| `4` | `RTK_SLAM` | RTK fixed + SLAM active | ~2 cm absolute |
+| `3` | `SLAM_DOMINANT` | RTK float + SLAM active | ~5–10 cm |
+| `2` | `SLAM_ODOM` | No GPS + SLAM active | ~10–20 cm relative |
+| `1` | `GPS_ODOM` | RTK fixed + no SLAM | No obstacle avoidance |
+| `0` | `DEAD_RECKONING` | All sources degraded | Return to dock |
+
+---
+
+## Configuration
+
+### mowgli_robot.yaml — Central Robot Configuration
+
+`src/mowgli_bringup/config/mowgli_robot.yaml` is the single source of truth for all physical, operational, and safety parameters. The launch files read it at startup. In Docker deployment it is bind-mounted from the host at `/ros2_ws/config/mowgli_robot.yaml` so changes take effect on container restart without rebuilding the image.
+
+All dimensions are in **metres**, angles in **radians**, speeds in **m/s**.
+
+#### Hardware / Physical
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `mower_model` | `"YardForce500"` | Robot model identifier |
+| `chassis_length` | `0.54` | Chassis length |
+| `chassis_width` | `0.40` | Chassis width |
+| `chassis_height` | `0.19` | Chassis height |
+| `chassis_mass_kg` | `8.76` | Total robot mass |
+| `wheel_radius` | `0.04475` | Drive wheel radius |
+| `wheel_track` | `0.325` | Drive wheel centre-to-centre track width |
+| `wheel_x_offset` | `0.0` | Drive wheel x offset from `base_link` (0 = at wheel axis) |
+| `chassis_center_x` | `0.18` | Chassis geometric centre forward of wheel axis |
+| `ticks_per_revolution` | `1050` | Encoder ticks per full wheel revolution |
+| `caster_radius` | `0.03` | Front caster radius |
+| `blade_radius` | `0.09` | Cutting blade disc radius |
+| `tool_width` | `0.18` | Effective cut width (2 x blade_radius) |
+
+#### Sensor Positions (relative to base_link)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `lidar_x` | `0.38` | LiDAR forward offset |
+| `lidar_z` | `0.22` | LiDAR height offset |
+| `lidar_yaw` | `0.0` | LiDAR heading rotation |
+| `imu_x` | `0.18` | IMU forward offset |
+| `imu_z` | `0.095` | IMU height offset |
+| `gps_x` | `0.3` | GPS antenna forward offset |
+| `gps_z` | `0.20` | GPS antenna height offset |
+
+All sensor positions drive both the URDF (TF frames) and the Nav2 footprint polygon.
+
+#### GPS / Positioning
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `datum_lat` | `0.0` | Map origin latitude — **set per site** |
+| `datum_lon` | `0.0` | Map origin longitude — **set per site** |
+| `gps_protocol` | `"UBX"` | GPS receiver protocol |
+| `gps_wait_after_undock_sec` | `10.0` | Wait for RTK fix after undocking |
+| `ntrip_enabled` | `false` | Enable NTRIP RTK correction stream |
+| `ntrip_host` | `""` | NTRIP caster hostname |
+| `ntrip_port` | `2101` | NTRIP caster port |
+| `ntrip_mountpoint` | `""` | NTRIP mountpoint |
+
+#### Battery
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `battery_full_voltage` | `28.5` | Fully charged threshold (V) |
+| `battery_empty_voltage` | `24.0` | Start docking (V) |
+| `battery_critical_voltage` | `23.0` | Immediate dock (V) |
+| `battery_full_percent` | `95.0` | Resume mowing above this (%) |
+| `battery_low_percent` | `20.0` | Start docking (%) |
+| `battery_critical_percent` | `10.0` | Emergency dock — BT guard (%) |
+
+#### Mowing
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `mowing_speed` | `0.5` | Speed during coverage paths (m/s) |
+| `transit_speed` | `0.5` | Speed during point-to-point navigation (m/s) |
+| `path_spacing` | `0.18` | Distance between parallel swath centrelines |
+| `headland_width` | `0.18` | Width of one headland pass (1 x tool_width) |
+| `mow_angle_offset_deg` | `-1.0` | Swath angle; -1 = auto-detect optimal |
+| `min_turning_radius` | `0.30` | Minimum turning radius for Dubins curves |
+
+#### Docking
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `dock_pose_x` | `0.0` | Dock position in map frame — **set per site** |
+| `dock_pose_y` | `0.0` | Dock position in map frame — **set per site** |
+| `dock_pose_yaw` | `4.17` | Dock heading in map frame (rad) — **set per site** |
+| `undock_distance` | `1.5` | Distance to reverse when undocking |
+| `undock_speed` | `0.15` | Reverse speed during undocking (m/s) |
+| `dock_max_retries` | `3` | Maximum docking attempts |
+
+#### Rain
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `rain_mode` | `2` | 0=ignore, 1=dock, 2=dock_until_dry, 3=pause_auto |
+| `rain_delay_minutes` | `30.0` | Wait after rain stops before resuming |
+| `rain_debounce_sec` | `10.0` | Rain must persist this long to trigger |
+
+#### SLAM / Mapping
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `slam_mode` | `"lifelong"` | `mapping` / `localization` / `lifelong` |
+| `map_save_path` | `"/ros2_ws/maps/garden_map"` | Pose graph file path (no extension) |
+| `map_save_on_dock` | `true` | Save SLAM pose graph to disk before docking |
+
+### Coverage Planner Parameters
+
+`src/mowgli_coverage_planner/config/coverage_planner.yaml`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `tool_width` | `0.18` | Effective cut width |
+| `headland_passes` | `3` | Perimeter passes before fill swaths |
+| `headland_width` | `0.25` | Width of one headland pass |
+| `default_mow_angle` | `-1.0` | Swath angle in degrees; -1 = brute-force optimal |
+| `path_spacing` | `0.18` | Distance between swath centrelines |
+| `min_turning_radius` | `0.15` | Dubins curve turning radius |
+| `decompose_cells` | `true` | Cell decomposition for non-convex polygons |
+| `mowing_speed` | `0.15` | Speed limit for mowing edges in GeoJSON route (m/s) |
+| `transit_speed` | `0.3` | Speed limit for turn/transit edges (m/s) |
+| `route_graph_filepath` | `"/tmp/mowing_route.geojson"` | GeoJSON route graph output path |
+
+### Key Config File Reference
+
+| File | Controls |
+|------|----------|
+| `src/mowgli_bringup/config/mowgli_robot.yaml` | All physical, operational, and safety parameters |
+| `src/mowgli_bringup/config/nav2_params.yaml` | Nav2 controllers, planner, costmaps, collision monitor |
+| `src/mowgli_bringup/config/localization.yaml` | Dual EKF tuning and GPS covariances |
+| `src/mowgli_bringup/config/slam_toolbox.yaml` | SLAM scan matching, loop closure, map update rate |
+| `src/mowgli_bringup/config/twist_mux.yaml` | `cmd_vel` multiplexer priorities and timeouts |
+| `src/mowgli_coverage_planner/config/coverage_planner.yaml` | Fields2Cover pipeline parameters |
+| `src/mowgli_map/config/obstacle_tracker.yaml` | LiDAR obstacle detection thresholds |
+| `src/mowgli_behavior/config/behavior_tree.yaml` | BT node parameters |
+| `src/mowgli_behavior/trees/main_tree.xml` | Full BT structure: guards, sequences, recovery |
+
+---
+
+## Building
+
+### Prerequisites
+
+- ROS2 Jazzy on Ubuntu 24.04
+- Fields2Cover v2 built from source (see below)
+- `colcon`, `rosdep`, `xacro` (`python3-colcon-common-extensions`, `python3-rosdep`)
+
+### Build Fields2Cover from Source
+
+```bash
+sudo apt-get install -y libgdal-dev
+git clone --branch main --depth 1 \
+  https://github.com/Fields2Cover/Fields2Cover.git /tmp/f2c
+cmake -S /tmp/f2c -B /tmp/f2c/build \
+  -DCMAKE_INSTALL_PREFIX=/usr/local \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=OFF \
+  -DBUILD_PYTHON=OFF
+cmake --build /tmp/f2c/build -j$(nproc)
+sudo cmake --install /tmp/f2c/build
+sudo ldconfig
+rm -rf /tmp/f2c
+```
+
+### Build the Workspace
+
+```bash
+source /opt/ros/jazzy/setup.bash
+cd /path/to/mowgli-ros2
+
+rosdep update --rosdistro jazzy
+rosdep install --from-paths src --ignore-src --rosdistro jazzy \
+  --skip-keys "fields2cover" -y
+
+colcon build \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release \
+               -DFields2Cover_DIR=/usr/local/cmake/fields2cover \
+  --parallel-workers $(nproc) \
+  --event-handlers console_cohesion+
+
+source install/setup.bash
+```
+
+### Running Tests
+
+```bash
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
+colcon test --return-code-on-test-failure
+colcon test-result --verbose
+```
+
+### Makefile Shortcuts
+
+```bash
+make build           # colcon build (Release)
+make build-debug     # colcon build (Debug)
+make test            # colcon test + test-result
+make clean           # remove build/ install/ log/
+make format          # clang-format all C++ files in-place
+make format-check    # verify formatting without modifying files
+make lint            # cppcheck + cpplint
+```
+
+---
+
+## Docker Deployment
+
+### Image Stages
+
+| Stage | From | Contents |
+|-------|------|----------|
+| `base` | `ros:jazzy-ros-base` | All apt runtime deps: Nav2, slam_toolbox, rosbridge-suite, foxglove-bridge, Cyclone DDS |
+| `deps` | `base` | Build tools, rosdep resolution, Fields2Cover v2 built from source |
+| `build-interfaces` | `deps` | `mowgli_interfaces` compiled only (cached layer, rarely rebuilt) |
+| `build` | `build-interfaces` | All remaining packages compiled, unit tests run |
+| `runtime` | `base` | Compiled install tree + rosbridge CBOR patch applied. Sets `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` |
+| `simulation` | `runtime` | Gazebo Harmonic + TigerVNC + noVNC for GUI access |
+
+### Docker Compose Services
+
+| Service | Image | Ports | Use case |
+|---------|-------|-------|----------|
+| `mowgli` | `runtime` | — | Real hardware — requires `/dev/mowgli` serial device |
+| `simulation` | `simulation` | `8765` | Headless Gazebo + full nav stack |
+| `simulation-gui` | `simulation` | `8765`, `6080` | Gazebo GUI via noVNC |
+| `nav` | `runtime` | — | Navigation stack only (no hardware bridge) |
+| `dev-sim` | `dev` | `8765`, `6080` | Development with bind-mounted source tree |
+| `dev-sim-small` | `dev` | `8765`, `6080` | Small 10m x 8m garden for fast iteration |
+| `dev` | `dev` | — | Interactive shell with bind-mounted source tree |
+
+### Running Hardware
+
+```bash
+# Requires /dev/mowgli USB serial symlink to STM32 board
+docker compose up mowgli
+```
+
+### Running Simulation
+
+```bash
+# Headless — connect Foxglove Studio to ws://localhost:8765
+make run-sim
+
+# With Gazebo GUI — open http://localhost:6080/vnc.html
+make run-sim-gui
+```
+
+### Development Workflow
+
+```bash
+# Start dev simulation (source bind-mounted from host)
+make dev-sim
+
+# In another terminal: edit source files on the host, then rebuild:
+make dev-build                             # rebuild all packages
+make dev-build-pkg PKG=mowgli_behavior    # rebuild one package
+
+# Restart simulation to pick up rebuilt code:
+make dev-restart
+
+# Open an interactive shell inside the running container:
+make dev-shell
+```
+
+Config and YAML files under `src/` are live-edited without rebuilding — just restart the container.
+
+### Deploying to the Robot
+
+```bash
+# rsync compiled install tree to robot, then restart systemd service
+make deploy ROBOT_HOST=mowgli.local ROBOT_USER=pi
+
+# Pull SLAM maps from the robot
+make backup-maps ROBOT_HOST=mowgli.local ROBOT_USER=pi
+```
+
+A `systemd/mowgli.service` unit file is provided for running the stack as a system service on the robot. Install it to `/etc/systemd/system/` and enable it with `systemctl enable mowgli`.
+
+---
+
+## Launch Files
+
+### Two-Tier Structure
+
+**Tier 1 — `mowgli.launch.py`** (hardware layer):
+
+- `robot_state_publisher` — processes URDF xacro with all dimensions from `mowgli_robot.yaml`, publishes `/robot_description` and static TF frames
+- `hardware_bridge_node` — COBS serial bridge to STM32
+- `twist_mux` — priority multiplexer: navigation (priority 10) < teleop (20) < emergency velocity (100) < `emergency_stop` lock (255)
+
+**Tier 2 — `full_system.launch.py`** (includes Tier 1 + full navigation stack):
+
+- `navigation.launch.py` — slam_toolbox, dual EKF (`ekf_odom` + `ekf_map`), Nav2 bringup
+- `behavior_tree_node` — BT mission executor
+- `map_server_node` + `obstacle_tracker_node` — area management and obstacle tracking
+- `coverage_planner_node` — Fields2Cover v2 action server
+- `wheel_odometry_node`, `navsat_to_absolute_pose_node`, `gps_pose_converter_node`, `slam_heading_node`, `localization_monitor_node` — localization pipeline
+- `diagnostics_node` — robot health monitoring
+- `mqtt_bridge_node` — optional, `enable_mqtt:=true`
+- `foxglove_bridge` — enabled by default on port 8765
+- `rosbridge_websocket` + `rosapi_node` — enabled by default on port 9090
+
+### Launch Arguments
+
+**`full_system.launch.py`:**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `use_sim_time` | `false` | Use Gazebo simulation clock |
+| `serial_port` | `/dev/mowgli` | Hardware bridge serial device |
+| `slam` | `true` | Run slam_toolbox; `false` with a pre-built map |
+| `map` | `""` | Path to pre-built map yaml (when `slam:=false`) |
+| `enable_mqtt` | `false` | Launch MQTT bridge node |
+| `enable_foxglove` | `true` | Launch Foxglove Bridge |
+| `enable_rosbridge` | `true` | Launch rosbridge_server |
+| `foxglove_port` | `8765` | Foxglove Bridge WebSocket port |
+| `rosbridge_port` | `9090` | rosbridge WebSocket port |
+
+**`navigation.launch.py`:**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `slam_mode` | `lifelong` | `mapping` / `localization` / `lifelong` |
+| `map_file_name` | `/ros2_ws/maps/garden_map` | Pose graph path without file extension |
+| `use_ekf` | `true` | Run dual EKF; set `false` in simulation |
+
+### Simulation Launch Files
+
+| File | Description |
+|------|-------------|
+| `sim_full_system.launch.py` | Full stack with Gazebo Harmonic (headless by default) |
+| `sim_small_garden.launch.py` | 10m x 8m garden for boundary and path testing |
+| `simulation.launch.py` | Gazebo and `ros_gz_bridge` only |
+
+---
+
+## Behavior Tree
+
+The mission executor loads `src/mowgli_behavior/trees/main_tree.xml` using BehaviorTree.CPP v4. The root is a `ReactiveSequence`, which means all guards are re-evaluated on every tick before the child can proceed.
+
+### Guard Priority (outer to inner, highest to lowest)
+
+```
+ReactiveSequence (Root)
+  |
+  +-- EmergencyGuard
+  |     Polls /hardware_bridge/emergency every tick.
+  |     On emergency: disable blade, stop, publish EMERGENCY, wait 1s.
+  |
+  +-- BoundaryGuard
+  |     Polls /map_server_node/boundary_violation every tick.
+  |     On violation: disable blade, stop, back up (5 attempts, 1m each),
+  |     publish BOUNDARY_EMERGENCY_STOP if all attempts fail.
+  |
+  +-- GPSModeSelector
+  |     RTK fixed  -> SetNavMode("precise")   full speed
+  |     Otherwise  -> SetNavMode("degraded")  half speed + wider inflation
+  |
+  +-- MainLogic (Fallback — tried in order)
+        |
+        +-- CriticalBatteryDock  battery_percent < 10%  -> dock immediately
+        +-- MowingSequence       COMMAND_START = 1
+        +-- HomeSequence         COMMAND_HOME = 2
+        +-- RecordingSequence    COMMAND_S1 = 3
+        +-- IdleSequence         no command -> wait 0.5s
+```
+
+### Mowing Sequence (COMMAND_START)
+
+```
+MowingSequence
+  PublishHighLevelStatus("UNDOCKING")
+  UndockOrSkip
+    IsCharging? -> skip (robot already in field)
+    UndockSequence:
+      Wait up to 30s for GPS fix (timeout -> proceed anyway)
+      SaveSlamMap("/ros2_ws/maps/garden_map")
+      RecordUndockStart         snapshot GPS position
+      UndockRobot               opennav_docking undock action
+      CalibrateHeadingFromUndock compute map heading from GPS displacement
+  WasRainingAtStart             record rain state at session start
+  ComputeCoverage(area_index=0) PlanCoverage action -> Fields2Cover pipeline
+  PublishHighLevelStatus("MOWING")
+
+  AdaptiveCoverage (ReactiveSequence)
+    |
+    +-- RainGuard
+    |     IsNewRain? (rain started DURING mowing, not before)
+    |     -> disable blade, stop, dock, wait up to 12h for rain to clear,
+    |        wait rain_delay_minutes, undock, resume
+    |
+    +-- BatteryGuard
+    |     NeedsDocking(threshold=20%)?
+    |     -> disable blade, stop, dock, wait until battery > 95%
+    |        (IsChargingProgressing detects stalled charger after 30min),
+    |        undock, resume
+    |
+    +-- RetrySwathExecution (3 attempts)
+          ExecuteSwathBySwath
+            or RecoverAndRetry:
+              disable blade, stop, back up 0.5m, ClearCostmap, wait 3s
+
+  Fallback if all retries exhausted:
+    SaveObstacles + SaveSlamMap + DockRobot + ClearCommand
+
+  On completion:
+    SetMowerEnabled(false)
+    SaveObstacles
+    SaveSlamMap
+    DockRobot
+    PublishHighLevelStatus("IDLE_DOCKED")
+    ClearCommand
+```
+
+### BT Condition Nodes
+
+| Node | Returns SUCCESS when |
+|------|---------------------|
+| `IsEmergency` | Active emergency from hardware bridge |
+| `IsBoundaryViolation` | Robot is outside all allowed mowing areas |
+| `IsGPSFixed` | `FLAG_GPS_RTK_FIXED` set in AbsolutePose |
+| `IsCharging` | Charger relay enabled (robot on dock) |
+| `IsBatteryLow(threshold)` | `battery_percent` < threshold (default 22%) |
+| `NeedsDocking(threshold)` | `battery_percent` <= threshold (default 20%) |
+| `IsBatteryAbove(threshold)` | `battery_percent` >= threshold (default 95%) |
+| `IsRainDetected` | Rain sensor reports rain |
+| `IsNewRain` | Rain detected AND was not raining at mow session start |
+| `IsChargingProgressing` | Battery increased >= 1% in the last 30 minutes |
+| `IsCommand(command)` | `context.current_command` == input value |
+| `ReplanNeeded` | `/map_server_node/replan_needed` is true |
+
+### BT Action Nodes
+
+| Node | What it does |
+|------|-------------|
+| `SetMowerEnabled(enabled)` | Calls `/hardware_bridge/mower_control` service |
+| `StopMoving` | Publishes zero Twist to `/cmd_vel` |
+| `BackUp(backup_dist, backup_speed)` | Nav2 `/backup` action |
+| `NavigateToPose(goal)` | Nav2 `/navigate_to_pose` action; goal as `"x;y;yaw"` string |
+| `ExecuteSwathBySwath` | Follows coverage path swath by swath via Nav2 `FollowPath` |
+| `DockRobot(dock_id, dock_type)` | `opennav_docking` `/dock_robot` action |
+| `UndockRobot(dock_type)` | `opennav_docking` `/undock_robot` action |
+| `ComputeCoverage(area_index)` | `PlanCoverage` action to `coverage_planner_node` |
+| `ReplanCoverage` | Fetch updated areas and obstacles, replan, publish new path |
+| `SaveSlamMap(map_path)` | Calls `/slam_toolbox/serialize_map` service |
+| `SaveObstacles` | Calls `/obstacle_tracker/save_obstacles` service |
+| `ClearCostmap` | Clears global and local costmaps via Nav2 services |
+| `SetNavMode(mode)` | Adjusts Nav2 speed limits based on GPS quality (`precise` / `degraded`) |
+| `PublishHighLevelStatus(state, state_name)` | Publishes `mowgli_interfaces/msg/HighLevelStatus` |
+| `WaitForDuration(duration_sec)` | Non-blocking wait; returns RUNNING until duration elapses |
+| `RecordUndockStart` | Snapshots GPS position before undocking |
+| `CalibrateHeadingFromUndock` | Computes map heading from GPS displacement vector during undock |
+| `ClearCommand` | Resets `context.current_command` to 0 |
+
+---
+
+## Simulation
+
+Gazebo Harmonic worlds in `src/mowgli_simulation/worlds/`:
+
+| World | Size | Use |
+|-------|------|-----|
+| `garden.sdf` | Full garden | End-to-end coverage testing |
+| `small_garden.sdf` | 10m x 8m | Boundary and path testing (fast iteration) |
+| `empty_garden.sdf` | Flat plane | Controller and localization testing |
+
+The SDF model in `src/mowgli_simulation/models/mowgli_mower/model.sdf` provides a differential drive plugin, 360-degree LiDAR (range_min=0.35m to suppress chassis self-reflections), IMU, and GPS. Sensor data is bridged to ROS2 via `ros_gz_bridge`.
+
+Changes to `model.sdf` require a Docker image rebuild. Bind-mounting the models directory breaks Gazebo sensor initialization.
+
+### Foxglove Studio
+
+Connect to `ws://localhost:8765`. Import the layout from `foxglove/mowgli_sim.json`.
+
+Useful topics to visualize:
+
+- `/scan` — LiDAR
+- `/coverage_planner_node/coverage_path` — planned swath path
+- `/local_costmap/costmap` and `/global_costmap/costmap` — obstacle and keepout maps
+- `/behavior_tree_node/high_level_status` — current BT state
+- `/map_server_node/mow_progress` — mowing coverage grid
+
+### Monitoring Logs
+
+```bash
+# Stream logs, filter noisy BT idle chatter
+docker logs mowgli_dev_sim -f 2>&1 \
+  | grep -v "PublishHighLevelStatus\|Inverter\|Guard\|NeedsDocking\|IsRainDetected\|IsEmergency"
+
+# Check robot position
+docker exec mowgli_dev_sim bash -c \
+  'source /opt/ros/jazzy/setup.bash && ros2 topic echo /wheel_odom --once' \
+  | grep -A3 position:
+
+# Watch coverage path progress
+docker exec mowgli_dev_sim bash -c \
+  'source /opt/ros/jazzy/setup.bash && ros2 topic echo /follow_path/_action/feedback --once' \
+  | grep distance
+```
+
+---
+
+## GUI Integration
+
+The `openmower-gui` (Go backend + React/Vite frontend) connects via rosbridge at `ws://<robot-ip>:9090`.
+
+The GUI uses **`compression: "none"`** — the rosbridge CBOR encoder in Jazzy crashes on `float64[36]` covariance arrays (Odometry, Imu). The Dockerfile applies `scripts/patch_rosbridge.py` at build time to patch the server-side encoder. Do not enable CBOR compression without verifying this fix is present.
+
+GUI settings use snake_case YAML keys: `datum_lat`, `datum_lon`, `tool_width`, `battery_full_voltage`, `battery_empty_voltage`, `battery_capacity_mah`.
+
+`/battery_state` (`sensor_msgs/msg/BatteryState`) is published by `hardware_bridge_node` for `opennav_docking` charging detection.
+
+---
+
+## Hardware Protocol
+
+`hardware_bridge_node` communicates with the STM32 over USB serial using:
+
+- **COBS** (Consistent Overhead Byte Stuffing) framing — `0x00` is the frame delimiter
+- **CRC-16 CCITT-FALSE** checksum covering all payload bytes
+- **Little-endian** packed structs (`#pragma pack(push,1)`)
+
+Packet IDs (from `src/mowgli_hardware/include/mowgli_hardware/ll_datatypes.hpp`):
+
+| ID | Direction | Description |
+|----|-----------|-------------|
+| `0x01` | STM32 -> Pi | System status (charging, rain, emergency, UI board) |
+| `0x02` | STM32 -> Pi | IMU data (accelerometer, gyroscope) |
+| `0x03` | STM32 -> Pi | UI button events |
+| `0x04` | STM32 -> Pi | Wheel odometry (encoder ticks, delta) |
+| `0x05` | STM32 -> Pi | Blade ESC status (temperature, current, RPM) |
+| `0x42` | Pi -> STM32 | Heartbeat (4 Hz) |
+| `0x43` | Pi -> STM32 | High-level state |
+| `0x50` | Pi -> STM32 | Velocity command (linear x, angular z) |
+| `0x51` | Pi -> STM32 | Blade motor control (enable / disable) |
+
+`hardware_bridge_node` parameters:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `serial_port` | `/dev/mowgli` | Serial device path |
+| `baud_rate` | `115200` | Serial baud rate |
+| `heartbeat_rate` | `4.0` | Heartbeat frequency (Hz) |
+| `publish_rate` | `100.0` | Sensor data publish rate (Hz) |
+
+Reference C implementation for STM32 porting is in `src/mowgli_hardware/firmware/`.
+
+---
+
+## Contributing
+
+Contributions are welcome. Before opening a pull request:
+
+1. Run `make format` to apply `clang-format` (style file: `.clang-format`).
+2. Run `make lint` to check with `cppcheck` and `cpplint`.
+3. Run `make test` and confirm all tests pass.
+
+### Conventions
+
+- **C++ standard:** C++17, `ament_cmake` build system
+- **Naming:** `snake_case` for files and ROS parameters, `CamelCase` for C++ classes and node names
+- **Units:** SI throughout — metres, radians, seconds
+- **Frames:** `map` (global), `odom` (local), `base_link` (robot body)
+- **Topics:** `~/topic` for node-private topics, `/topic` for shared topics
+
+### Pre-commit
+
+A `.pre-commit-config.yaml` is provided:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+### CI Pipeline
+
+GitHub Actions runs on every push and pull request to `main`:
+
+- Build and unit test on `ubuntu-24.04` / ROS2 Jazzy
+- `clang-format` compliance check (clang-format-17)
+- `cppcheck` static analysis
+
+---
+
+## License
+
+All packages in this repository declare **GPL-3.0-or-later** as their license in `package.xml` and carry the SPDX identifier `GPL-3.0` in source file headers.
+
+The firmware reference implementation in `src/mowgli_hardware/firmware/` is derived from the OpenMower STM32 firmware and is covered by the same GPL-3.0 license.
+
+No `LICENSE` file exists in the repository root. The SPDX identifiers in source files and `package.xml` declarations are the authoritative license statements.

@@ -117,13 +117,14 @@ BT::NodeStatus SetMowerEnabled::tick()
   request->mow_enabled = enabled ? 1u : 0u;
   request->mow_direction = 0u;
 
-  // Fire-and-forget: send the request asynchronously without blocking.
-  // The node is already being spun by the main executor, so
-  // spin_until_future_complete would throw.
-  client_->async_send_request(request);
+  // Fire-and-forget: the firmware is the safety authority for the blade.
+  // It has its own lift/tilt/emergency checks and will refuse or stop the
+  // blade regardless of what ROS2 requests.
+  auto future = client_->async_send_request(request);
+  (void)future;
 
   RCLCPP_INFO(ctx->node->get_logger(),
-              "SetMowerEnabled: mow_enabled set to %s",
+              "SetMowerEnabled: requested mow_enabled=%s",
               enabled ? "true" : "false");
 
   return BT::NodeStatus::SUCCESS;
@@ -385,9 +386,12 @@ BT::NodeStatus PublishHighLevelStatus::tick()
   msg.state = state_res.value();
   msg.state_name = name_res.value();
   msg.sub_state_name = "";
-  msg.current_area = -1;
+  msg.current_area = static_cast<int16_t>(ctx->current_area);
   msg.current_path = -1;
   msg.current_path_index = -1;
+  msg.total_swaths = static_cast<int16_t>(ctx->total_swaths);
+  msg.completed_swaths = static_cast<int16_t>(ctx->completed_swaths);
+  msg.skipped_swaths = static_cast<int16_t>(ctx->skipped_swaths);
   msg.gps_quality_percent = ctx->gps_quality;
   msg.battery_percent = ctx->battery_percent;
   msg.is_charging = ctx->latest_power.charger_enabled;
@@ -588,10 +592,10 @@ BT::NodeStatus PlanCoveragePath::onStart()
     auto request = std::make_shared<mowgli_interfaces::srv::GetMowingArea::Request>();
     request->index = area_index;
 
-    // Use a temporary node to avoid "already added to an executor" error
+    // Use the shared helper node to avoid "already added to an executor" error
     // (the main behavior_tree_node is already spinning in rclcpp::spin).
-    auto tmp_node = rclcpp::Node::make_shared("_plan_coverage_srv_helper");
-    auto tmp_client = tmp_node->create_client<mowgli_interfaces::srv::GetMowingArea>(
+    auto helper = ctx->helper_node;
+    auto tmp_client = helper->create_client<mowgli_interfaces::srv::GetMowingArea>(
         "/map_server_node/get_mowing_area");
     if (!tmp_client->wait_for_service(std::chrono::milliseconds(2000)))
     {
@@ -601,7 +605,7 @@ BT::NodeStatus PlanCoveragePath::onStart()
       return BT::NodeStatus::FAILURE;
     }
     auto future = tmp_client->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(tmp_node, future, std::chrono::seconds(5)) !=
+    if (rclcpp::spin_until_future_complete(helper, future, std::chrono::seconds(5)) !=
         rclcpp::FutureReturnCode::SUCCESS)
     {
       RCLCPP_ERROR(ctx->node->get_logger(), "PlanCoveragePath: get_mowing_area timed out");
@@ -1009,9 +1013,9 @@ BT::NodeStatus ReplanCoverage::onStart()
     auto request = std::make_shared<mowgli_interfaces::srv::GetMowingArea::Request>();
     request->index = 0;
 
-    // Use a temporary node to avoid "already added to an executor" error.
-    auto tmp_node = rclcpp::Node::make_shared("_replan_coverage_srv_helper");
-    auto tmp_client = tmp_node->create_client<mowgli_interfaces::srv::GetMowingArea>(
+    // Use the shared helper node to avoid "already added to an executor" error.
+    auto helper = ctx->helper_node;
+    auto tmp_client = helper->create_client<mowgli_interfaces::srv::GetMowingArea>(
         "/map_server_node/get_mowing_area");
     if (!tmp_client->wait_for_service(std::chrono::milliseconds(2000)))
     {
@@ -1020,7 +1024,7 @@ BT::NodeStatus ReplanCoverage::onStart()
       return BT::NodeStatus::FAILURE;
     }
     auto future = tmp_client->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(tmp_node, future, std::chrono::seconds(5)) !=
+    if (rclcpp::spin_until_future_complete(helper, future, std::chrono::seconds(5)) !=
         rclcpp::FutureReturnCode::SUCCESS)
     {
       RCLCPP_ERROR(ctx->node->get_logger(), "ReplanCoverage: get_mowing_area timed out");
@@ -1319,6 +1323,192 @@ void BackUp::onHalted()
     RCLCPP_INFO(ctx->node->get_logger(), "BackUp: halted, goal cancelled");
   }
   goal_handle_ = nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// DockRobot
+// ---------------------------------------------------------------------------
+
+BT::NodeStatus DockRobot::onStart()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+
+  std::string dock_id = "home_dock";
+  if (auto res = getInput<std::string>("dock_id"))
+  {
+    dock_id = res.value();
+  }
+
+  std::string dock_type = "simple_charging_dock";
+  if (auto res = getInput<std::string>("dock_type"))
+  {
+    dock_type = res.value();
+  }
+
+  if (!action_client_)
+  {
+    action_client_ = rclcpp_action::create_client<DockAction>(ctx->node, "/dock_robot");
+  }
+
+  if (!action_client_->wait_for_action_server(std::chrono::seconds(5)))
+  {
+    RCLCPP_WARN(ctx->node->get_logger(), "DockRobot: /dock_robot action server not available");
+    return BT::NodeStatus::FAILURE;
+  }
+
+  DockAction::Goal goal_msg;
+  goal_msg.dock_id = dock_id;
+  goal_msg.dock_type = dock_type;
+  goal_msg.navigate_to_staging_pose = true;
+
+  auto send_goal_options = rclcpp_action::Client<DockAction>::SendGoalOptions{};
+  goal_handle_future_ = action_client_->async_send_goal(goal_msg, send_goal_options);
+  goal_handle_.reset();
+
+  RCLCPP_INFO(ctx->node->get_logger(),
+              "DockRobot: goal sent (dock_id='%s', dock_type='%s')",
+              dock_id.c_str(), dock_type.c_str());
+
+  return BT::NodeStatus::RUNNING;
+}
+
+BT::NodeStatus DockRobot::onRunning()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+
+  if (!goal_handle_)
+  {
+    if (goal_handle_future_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
+    {
+      return BT::NodeStatus::RUNNING;
+    }
+    goal_handle_ = goal_handle_future_.get();
+    if (!goal_handle_)
+    {
+      RCLCPP_ERROR(ctx->node->get_logger(), "DockRobot: goal was rejected by the action server");
+      return BT::NodeStatus::FAILURE;
+    }
+  }
+
+  const auto status = goal_handle_->get_status();
+
+  switch (status)
+  {
+    case action_msgs::msg::GoalStatus::STATUS_SUCCEEDED:
+      RCLCPP_INFO(ctx->node->get_logger(), "DockRobot: docking succeeded");
+      return BT::NodeStatus::SUCCESS;
+
+    case action_msgs::msg::GoalStatus::STATUS_ABORTED:
+      RCLCPP_WARN(ctx->node->get_logger(), "DockRobot: docking aborted");
+      return BT::NodeStatus::FAILURE;
+
+    case action_msgs::msg::GoalStatus::STATUS_CANCELED:
+      RCLCPP_WARN(ctx->node->get_logger(), "DockRobot: docking canceled");
+      return BT::NodeStatus::FAILURE;
+
+    default:
+      return BT::NodeStatus::RUNNING;
+  }
+}
+
+void DockRobot::onHalted()
+{
+  if (goal_handle_)
+  {
+    auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+    RCLCPP_INFO(ctx->node->get_logger(), "DockRobot: canceling active goal");
+    action_client_->async_cancel_goal(goal_handle_);
+    goal_handle_.reset();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UndockRobot
+// ---------------------------------------------------------------------------
+
+BT::NodeStatus UndockRobot::onStart()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+
+  std::string dock_type = "simple_charging_dock";
+  if (auto res = getInput<std::string>("dock_type"))
+  {
+    dock_type = res.value();
+  }
+
+  if (!action_client_)
+  {
+    action_client_ = rclcpp_action::create_client<UndockAction>(ctx->node, "/undock_robot");
+  }
+
+  if (!action_client_->wait_for_action_server(std::chrono::seconds(5)))
+  {
+    RCLCPP_WARN(ctx->node->get_logger(), "UndockRobot: /undock_robot action server not available");
+    return BT::NodeStatus::FAILURE;
+  }
+
+  UndockAction::Goal goal_msg;
+  goal_msg.dock_type = dock_type;
+
+  auto send_goal_options = rclcpp_action::Client<UndockAction>::SendGoalOptions{};
+  goal_handle_future_ = action_client_->async_send_goal(goal_msg, send_goal_options);
+  goal_handle_.reset();
+
+  RCLCPP_INFO(ctx->node->get_logger(),
+              "UndockRobot: goal sent (dock_type='%s')",
+              dock_type.c_str());
+
+  return BT::NodeStatus::RUNNING;
+}
+
+BT::NodeStatus UndockRobot::onRunning()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+
+  if (!goal_handle_)
+  {
+    if (goal_handle_future_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
+    {
+      return BT::NodeStatus::RUNNING;
+    }
+    goal_handle_ = goal_handle_future_.get();
+    if (!goal_handle_)
+    {
+      RCLCPP_ERROR(ctx->node->get_logger(), "UndockRobot: goal was rejected by the action server");
+      return BT::NodeStatus::FAILURE;
+    }
+  }
+
+  const auto status = goal_handle_->get_status();
+
+  switch (status)
+  {
+    case action_msgs::msg::GoalStatus::STATUS_SUCCEEDED:
+      RCLCPP_INFO(ctx->node->get_logger(), "UndockRobot: undocking succeeded");
+      return BT::NodeStatus::SUCCESS;
+
+    case action_msgs::msg::GoalStatus::STATUS_ABORTED:
+      RCLCPP_WARN(ctx->node->get_logger(), "UndockRobot: undocking aborted");
+      return BT::NodeStatus::FAILURE;
+
+    case action_msgs::msg::GoalStatus::STATUS_CANCELED:
+      RCLCPP_WARN(ctx->node->get_logger(), "UndockRobot: undocking canceled");
+      return BT::NodeStatus::FAILURE;
+
+    default:
+      return BT::NodeStatus::RUNNING;
+  }
+}
+
+void UndockRobot::onHalted()
+{
+  if (goal_handle_)
+  {
+    auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+    RCLCPP_INFO(ctx->node->get_logger(), "UndockRobot: canceling active goal");
+    action_client_->async_cancel_goal(goal_handle_);
+    goal_handle_.reset();
+  }
 }
 
 }  // namespace mowgli_behavior
