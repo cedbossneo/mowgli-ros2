@@ -1,7 +1,9 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -37,6 +39,17 @@ struct BTContext
   mowgli_interfaces::msg::Status latest_status;
   mowgli_interfaces::msg::Emergency latest_emergency;
   mowgli_interfaces::msg::Power latest_power;
+
+  /// Timestamp of the last emergency message received.
+  std::chrono::steady_clock::time_point last_emergency_time{};
+
+  // -----------------------------------------------------------------------
+  // Thread safety
+  // -----------------------------------------------------------------------
+
+  /// Mutex protecting fields written by subscriber callbacks and read by
+  /// BT condition/action nodes.  Use std::lock_guard for RAII locking.
+  mutable std::mutex context_mutex;
 
   // -----------------------------------------------------------------------
   // Command state (set by HighLevelControl service handler)

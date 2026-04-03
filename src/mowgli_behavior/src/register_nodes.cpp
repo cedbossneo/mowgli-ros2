@@ -39,6 +39,8 @@ void registerAllNodes(BT::BehaviorTreeFactory& factory)
   factory.registerNodeType<WasRainingAtStart>("WasRainingAtStart");
   factory.registerNodeType<RecordUndockStart>("RecordUndockStart");
   factory.registerNodeType<CalibrateHeadingFromUndock>("CalibrateHeadingFromUndock");
+  factory.registerNodeType<DockRobot>("DockRobot");
+  factory.registerNodeType<UndockRobot>("UndockRobot");
 
   // Coverage nodes (opennav_coverage integration)
   factory.registerNodeType<ComputeCoverage>("ComputeCoverage");

@@ -1,6 +1,8 @@
 #include "mowgli_behavior/condition_nodes.hpp"
 
+#include <chrono>
 #include <memory>
+#include <mutex>
 
 namespace mowgli_behavior
 {
@@ -12,6 +14,16 @@ namespace mowgli_behavior
 BT::NodeStatus IsEmergency::tick()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  std::lock_guard<std::mutex> lock(ctx->context_mutex);
+
+  // Fail-safe: if emergency data is stale (>2 s since last message),
+  // treat as emergency so the robot stops.
+  const auto age = std::chrono::steady_clock::now() - ctx->last_emergency_time;
+  if (age > std::chrono::seconds(2))
+  {
+    return BT::NodeStatus::SUCCESS;  // stale data → assume emergency
+  }
+
   return ctx->latest_emergency.active_emergency ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
 }
 
@@ -22,6 +34,7 @@ BT::NodeStatus IsEmergency::tick()
 BT::NodeStatus IsCharging::tick()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  std::lock_guard<std::mutex> lock(ctx->context_mutex);
   return ctx->latest_power.charger_enabled ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
 }
 
@@ -32,6 +45,7 @@ BT::NodeStatus IsCharging::tick()
 BT::NodeStatus IsBatteryLow::tick()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  std::lock_guard<std::mutex> lock(ctx->context_mutex);
 
   float threshold = 22.0f;
   if (auto res = getInput<float>("threshold"))
@@ -59,6 +73,7 @@ BT::NodeStatus IsRainDetected::tick()
 BT::NodeStatus NeedsDocking::tick()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  std::lock_guard<std::mutex> lock(ctx->context_mutex);
 
   float threshold = 20.0f;
   if (auto res = getInput<float>("threshold"))
@@ -76,6 +91,7 @@ BT::NodeStatus NeedsDocking::tick()
 BT::NodeStatus IsBatteryAbove::tick()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  std::lock_guard<std::mutex> lock(ctx->context_mutex);
 
   float threshold = 95.0f;
   if (auto res = getInput<float>("threshold"))
@@ -113,6 +129,7 @@ BT::NodeStatus IsCommand::tick()
 BT::NodeStatus IsGPSFixed::tick()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  std::lock_guard<std::mutex> lock(ctx->context_mutex);
   return ctx->gps_is_fixed ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
 }
 

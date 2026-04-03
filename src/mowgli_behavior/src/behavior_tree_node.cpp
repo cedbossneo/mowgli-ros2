@@ -1,6 +1,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -66,6 +67,7 @@ private:
                                               10,
                                               [this](Status::ConstSharedPtr msg)
                                               {
+                                                std::lock_guard<std::mutex> lock(context_->context_mutex);
                                                 context_->latest_status = *msg;
                                               });
 
@@ -73,24 +75,27 @@ private:
                                                     10,
                                                     [this](Emergency::ConstSharedPtr msg)
                                                     {
+                                                      std::lock_guard<std::mutex> lock(context_->context_mutex);
                                                       context_->latest_emergency = *msg;
+                                                      context_->last_emergency_time =
+                                                          std::chrono::steady_clock::now();
                                                     });
 
     power_sub_ = create_subscription<Power>("/hardware_bridge/power",
                                             10,
                                             [this](Power::ConstSharedPtr msg)
                                             {
+                                              std::lock_guard<std::mutex> lock(context_->context_mutex);
                                               context_->latest_power = *msg;
 
-                                              // Derive battery_percent from voltage.
-                                              // Simple linear approximation: 25.2 V = 100 %, 21.0 V
-                                              // = 0 % (4S LiPo: 4 cells × 4.2 V max / 3.5 V cutoff)
-                                              constexpr float V_MAX = 25.2f;
-                                              constexpr float V_MIN = 21.0f;
+                                              // Derive battery_percent from voltage using
+                                              // configurable thresholds from ROS parameters.
+                                              const float v_max = battery_full_voltage_;
+                                              const float v_min = battery_empty_voltage_;
                                               const float clamped =
-                                                  std::clamp(msg->v_battery, V_MIN, V_MAX);
+                                                  std::clamp(msg->v_battery, v_min, v_max);
                                               context_->battery_percent =
-                                                  100.0f * (clamped - V_MIN) / (V_MAX - V_MIN);
+                                                  100.0f * (clamped - v_min) / (v_max - v_min);
                                             });
 
     // Replan / boundary signals from map_server_node
@@ -99,6 +104,7 @@ private:
                                                  rclcpp::QoS(1).transient_local(),
                                                  [this](std_msgs::msg::Bool::ConstSharedPtr msg)
                                                  {
+                                                   std::lock_guard<std::mutex> lock(context_->context_mutex);
                                                    context_->replan_needed = msg->data;
                                                  });
 
@@ -107,6 +113,7 @@ private:
                                                  10,
                                                  [this](std_msgs::msg::Bool::ConstSharedPtr msg)
                                                  {
+                                                   std::lock_guard<std::mutex> lock(context_->context_mutex);
                                                    context_->boundary_violation = msg->data;
                                                  });
 
@@ -115,6 +122,7 @@ private:
         "/gps/absolute_pose", 10,
         [this](mowgli_interfaces::msg::AbsolutePose::ConstSharedPtr msg)
         {
+          std::lock_guard<std::mutex> lock(context_->context_mutex);
           using AP = mowgli_interfaces::msg::AbsolutePose;
 
           context_->gps_x = msg->pose.pose.position.x;
@@ -163,7 +171,10 @@ private:
                                            RCLCPP_INFO(get_logger(),
                                                        "HighLevelControl: received command=%u",
                                                        req->command);
-                                           context_->current_command = req->command;
+                                           {
+                                             std::lock_guard<std::mutex> lock(context_->context_mutex);
+                                             context_->current_command = req->command;
+                                           }
                                            resp->success = true;
                                          });
 
@@ -210,6 +221,12 @@ private:
     blackboard_->set("undock_pose", undock_pose);
 
     declare_parameter<double>("tick_rate", 10.0);
+
+    // Battery voltage curve — configurable via mowgli_robot.yaml
+    battery_full_voltage_ = static_cast<float>(
+        declare_parameter<double>("battery_full_voltage", 28.5));
+    battery_empty_voltage_ = static_cast<float>(
+        declare_parameter<double>("battery_empty_voltage", 24.0));
 
     tree_ = factory_.createTreeFromFile(tree_file, blackboard_);
 
@@ -279,6 +296,10 @@ private:
 
   // Tick timer
   rclcpp::TimerBase::SharedPtr tick_timer_;
+
+  // Battery voltage curve parameters
+  float battery_full_voltage_{28.5f};
+  float battery_empty_voltage_{24.0f};
 };
 
 }  // namespace mowgli_behavior
